@@ -23,6 +23,8 @@ make -C "$SEAFILE_COMPAT_TESTS" test-data IMPL=c-baseline FIXTURES_DIR="$SEAFILE
 
 通过对象层基线后，将归档解到独立的临时目录。将 `SEAFILE_FIXTURES_V1` 和 `SEAFILE_FIXTURES_DATA` 分别设为 v1 目录和包含已解包 `storage/` 的目录，在 `fileserver/` 运行 `go test ./internal/seafserver -run '^TestReadFixturesV1$' -count=1 -v`。Go 验收应从 SQLite 读取三个业务库，遍历 15 个目录和 8 个文件，核对 27 个 commit 和文件引用的块。
 
+在 `fileserver/` 运行 `go build -o "$SEAFILE_GO_SERVER" ./cmd/seafserver` 可构建只读 Searpc 服务。将样本数据库放在解包后的数据目录中，文件名为 `seafile.db`。准备含 `[database]` 和 `type = sqlite` 的 `seafile.conf`，用 `-f -d 数据目录 -F 配置目录 -p socket目录` 启动 Go 服务。对同一快照的两个独立副本启动 C 和 Go 后，在兼容仓库传入两边的 `seafile.sock` 运行 `make test-api`。
+
 ## PR 顺序和验收条件
 
 各阶段可以拆成多个 PR。每个 PR 说明依赖及所覆盖的功能，并附上可复现的验收命令和实际结果。存在前置 PR 时，后续 PR 可以以前置分支为基线，合并时仍按依赖顺序进行。

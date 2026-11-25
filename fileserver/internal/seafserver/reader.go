@@ -55,14 +55,14 @@ func OpenSQLiteReadOnly(ctx context.Context, dbPath string) (*sql.DB, error) {
 
 // Repo reads the current branch and head commit from storage.
 func (r *Reader) Repo(ctx context.Context, repoID string) (*repomgr.Repo, error) {
-	if len(repoID) != 36 || !utils.IsValidUUID(repoID) {
+	if !validRepoID(repoID) {
 		return nil, fmt.Errorf("invalid repo id %q", repoID)
 	}
 	repo, err := repomgr.Load(ctx, r.db, repoID, r.Commit)
 	if err != nil {
 		return nil, err
 	}
-	if len(repo.StoreID) != 36 || !utils.IsValidUUID(repo.StoreID) {
+	if !validRepoID(repo.StoreID) {
 		return nil, fmt.Errorf("repo %s has an invalid store id %q", repoID, repo.StoreID)
 	}
 	return repo, nil
@@ -70,10 +70,14 @@ func (r *Reader) Repo(ctx context.Context, repoID string) (*repomgr.Repo, error)
 
 // Commit reads a commit from the logical repository, including virtual repos.
 func (r *Reader) Commit(repoID, commitID string) (*commitmgr.Commit, error) {
-	if len(repoID) != 36 || !utils.IsValidUUID(repoID) || !utils.IsObjectIDValid(commitID) {
+	if !validRepoID(repoID) || !utils.IsObjectIDValid(commitID) {
 		return nil, fmt.Errorf("invalid commit reference %q/%q", repoID, commitID)
 	}
 	return commitmgr.LoadFromStore(r.commits, repoID, commitID)
+}
+
+func validRepoID(id string) bool {
+	return len(id) == 36 && utils.IsValidUUID(id)
 }
 
 // Directory reads a directory from the repository's FS store.

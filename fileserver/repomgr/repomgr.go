@@ -32,6 +32,11 @@ type Repo struct {
 	HeadCommitID         string
 	RootID               string
 	IsCorrupted          bool
+	Repaired             bool
+	Size                 int64
+	FileCount            int64
+	Status               int
+	Type                 sql.NullString
 
 	// Set when repo is virtual
 	VirtualInfo *VRepoInfo
@@ -80,15 +85,20 @@ func Get(id string) *Repo {
 
 // Load reads the master branch, virtual repo mapping and head commit for a repo.
 func Load(ctx context.Context, db *sql.DB, id string, loadCommit func(string, string) (*commitmgr.Commit, error)) (*Repo, error) {
-	query := `SELECT r.repo_id, b.commit_id, v.origin_repo, v.path, v.base_commit FROM ` +
+	query := `SELECT r.repo_id, b.commit_id, v.origin_repo, v.path, v.base_commit, ` +
+		`COALESCE(s.size, 0), COALESCE(fc.file_count, 0), COALESCE(i.status, 0), i.type FROM ` +
 		`Repo r LEFT JOIN Branch b ON r.repo_id = b.repo_id ` +
 		`LEFT JOIN VirtualRepo v ON r.repo_id = v.repo_id ` +
+		`LEFT JOIN RepoSize s ON r.repo_id = s.repo_id ` +
+		`LEFT JOIN RepoFileCount fc ON r.repo_id = fc.repo_id ` +
+		`LEFT JOIN RepoInfo i ON r.repo_id = i.repo_id ` +
 		`WHERE r.repo_id = ? AND b.name = 'master'`
 
 	repo := new(Repo)
 	var originRepoID, path, baseCommitID sql.NullString
 	row := db.QueryRowContext(ctx, query, id)
-	if err := row.Scan(&repo.ID, &repo.HeadCommitID, &originRepoID, &path, &baseCommitID); err != nil {
+	if err := row.Scan(&repo.ID, &repo.HeadCommitID, &originRepoID, &path, &baseCommitID,
+		&repo.Size, &repo.FileCount, &repo.Status, &repo.Type); err != nil {
 		return nil, fmt.Errorf("load repo %s metadata: %w", id, err)
 	}
 
@@ -124,6 +134,7 @@ func Load(ctx context.Context, db *sql.DB, id string, loadCommit func(string, st
 	repo.LastModificationTime = commit.Ctime
 	repo.RootID = commit.RootID
 	repo.Version = commit.Version
+	repo.Repaired = commit.Repaired != 0
 	if commit.Encrypted == "true" {
 		repo.IsEncrypted = true
 		repo.EncVersion = commit.EncVersion

@@ -351,8 +351,7 @@ func editRepoNeedRetry(repoID, name, desc, user string) (bool, error) {
 		user = parent.CreatorName
 	}
 
-	commit := commitmgr.NewCommit(repoID, parent.CommitID, parent.RootID, user, "Changed library name or description")
-	repomgr.RepoToCommit(repo, commit)
+	commit := newFileServerCommit(repo, parent, parent.RootID, user, "Changed library name or description")
 	commit.RepoName = name
 	commit.RepoDesc = desc
 

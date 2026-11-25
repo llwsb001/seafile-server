@@ -3,10 +3,9 @@ package seafserver
 import (
 	"context"
 	"database/sql"
-	"math"
-	"strconv"
 	"strings"
 
+	"github.com/haiwen/seafile-server/fileserver/option"
 	"github.com/haiwen/seafile-server/fileserver/repomgr"
 )
 
@@ -33,7 +32,7 @@ func (q *UserQuota) get(ctx context.Context, user string) int64 {
 	if !ok {
 		return infiniteQuota
 	}
-	return parseDefaultQuota(value)
+	return option.ParseSQLiteDefaultQuota(value)
 }
 
 // SQLiteDefaultQuotaOverride reads the management setting used by upload checks.
@@ -42,40 +41,7 @@ func SQLiteDefaultQuotaOverride(ctx context.Context, db *sql.DB) (int64, bool) {
 	if !ok {
 		return 0, false
 	}
-	return parseDefaultQuota(value), true
-}
-
-func parseDefaultQuota(value string) int64 {
-	digits := strings.TrimLeft(value, decimalSpace)
-	digitEnd := 0
-	if len(digits) > 0 && (digits[0] == '-' || digits[0] == '+') {
-		digitEnd++
-	}
-	digitStart := digitEnd
-	for digitEnd < len(digits) && digits[digitEnd] >= '0' && digits[digitEnd] <= '9' {
-		digitEnd++
-	}
-	quota, suffix := int64(0), value
-	if digitEnd > digitStart {
-		var err error
-		quota, err = strconv.ParseInt(digits[:digitEnd], 10, 64)
-		if err != nil || quota == math.MinInt64 || quota == math.MaxInt64 {
-			return infiniteQuota
-		}
-		suffix = digits[digitEnd:]
-	}
-	switch asciiLower(suffix) {
-	case "k", "kb":
-		return quota * 1_000
-	case "m", "mb":
-		return quota * 1_000_000
-	case "", "g", "gb":
-		return quota * 1_000_000_000
-	case "t", "tb":
-		return quota * 1_000_000_000_000
-	default:
-		return infiniteQuota
-	}
+	return option.ParseSQLiteDefaultQuota(value), true
 }
 
 const quotaUsageJoin = " FROM RepoOwner o LEFT JOIN VirtualRepo v ON o.repo_id = v.repo_id, RepoSize" +

@@ -3061,6 +3061,9 @@ func updateDir(repoID, dirPath, newDirID, user, headID string) (string, error) {
 			err := fmt.Errorf("failed to generate new commit: %v", err)
 			return "", err
 		}
+		if repomgr.UsesSQLite() {
+			go updateSizePool.AddTask(repoID)
+		}
 		return newCommitID, nil
 	}
 

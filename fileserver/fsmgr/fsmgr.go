@@ -791,8 +791,8 @@ func GetSeafdirByPath(repoID string, rootID string, path string) (*SeafDir, erro
 
 	path = filepath.Join("/", path)
 	parts := strings.FieldsFunc(path, comp)
-	var dirID string
 	for _, name := range parts {
+		var dirID string
 		entries := dir.Entries
 		for _, v := range entries {
 			if v.Name == name && IsDir(v.Mode) {
@@ -879,7 +879,9 @@ func GetFileCountInfoByPath(repoID, rootID, path string) (*FileCountInfo, error)
 		return nil, err
 	}
 
-	info, err := getFileCountInfo(repoID, dirID)
+	info, err := countDirectoryFiles(dirID, func(id string) (*SeafDir, error) {
+		return GetSeafdir(repoID, id)
+	})
 	if err != nil {
 		err := fmt.Errorf("failed to get file count in repo %s: %v", repoID, err)
 		return nil, err
@@ -888,8 +890,15 @@ func GetFileCountInfoByPath(repoID, rootID, path string) (*FileCountInfo, error)
 	return info, nil
 }
 
-func getFileCountInfo(repoID, dirID string) (*FileCountInfo, error) {
-	dir, err := GetSeafdir(repoID, dirID)
+// ReadFileCountInfo counts files below a directory in the supplied object store.
+func ReadFileCountInfo(store *objstore.ObjectStore, repoID, dirID string, version int) (*FileCountInfo, error) {
+	return countDirectoryFiles(dirID, func(id string) (*SeafDir, error) {
+		return ReadSeafdir(store, repoID, id, version)
+	})
+}
+
+func countDirectoryFiles(dirID string, readDir func(string) (*SeafDir, error)) (*FileCountInfo, error) {
+	dir, err := readDir(dirID)
 	if err != nil {
 		err := fmt.Errorf("failed to get dir: %v", err)
 		return nil, err
@@ -900,12 +909,12 @@ func getFileCountInfo(repoID, dirID string) (*FileCountInfo, error) {
 	entries := dir.Entries
 	for _, de := range entries {
 		if IsDir(de.Mode) {
-			tmpInfo, err := getFileCountInfo(repoID, de.ID)
+			tmpInfo, err := countDirectoryFiles(de.ID, readDir)
 			if err != nil {
 				err := fmt.Errorf("failed to get file count: %v", err)
 				return nil, err
 			}
-			info.DirCount = tmpInfo.DirCount + 1
+			info.DirCount += tmpInfo.DirCount + 1
 			info.FileCount += tmpInfo.FileCount
 			info.Size += tmpInfo.Size
 		} else {

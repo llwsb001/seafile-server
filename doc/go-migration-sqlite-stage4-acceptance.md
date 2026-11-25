@@ -14,6 +14,10 @@
 
 ## 回归结果
 
+默认分支集成前使用 Linux ARM64 重新运行了 v5 和 v6。v5 的 C／C 543 步全部一致，C／Go 541 步全部符合预期，另有 2 步只回放 C。v6 的 C／C 和 C／Go 各 41 步零差异，覆盖普通建库、虚拟库复用、嵌套目录权限的改权、重启、撤销及 C 接管。 [兼容样本整合 PR #23](https://github.com/llwsb001/seafile-compat-tests/pull/23)
+
+常规 Go fileserver 启动仍使用 MySQL。同步令牌撤销的 SQLite 消费验收使用独立测试进程，常规启动与实际部署切换列入阶段 6。 [后续验收](go-migration-sqlite-next.md)
+
 | 样本 | 已验证结果 |
 | --- | --- |
 | v1 对象与读取 | 8 个块、78 个 FS 对象和 27 个提交校验无差异。C／Go 读 RPC 41 步零差异，覆盖普通库、虚拟库、加密库和路径错误。 [v1 验收](go-migration-plan.md) |

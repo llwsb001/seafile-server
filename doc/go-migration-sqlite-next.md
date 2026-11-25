@@ -11,7 +11,7 @@
 | 3 | 迁移管理设置的 `get_server_config_*` 与 `set_server_config_*`，接通 `SeafileConf` 的字符串、整数、64 位整数和布尔值。 | 1 | 覆盖数据库值、文件值、缺失值与类型转换。已迁移的历史保留读路径通过。Go 写入配置后，C 重启能读出同一设置。 |
 | 4 | 迁移用户配额、实际用量与上传前检查。覆盖 `seafile_get_user_quota_usage`、`seafile_get_user_share_usage`、`set_user_quota`、`get_user_quota`、`check_quota` 和 `list_user_quota_usage`。 | 1、3 | 覆盖默认和显式配额、单位、无限、空库、虚拟库归属、共享用量和精确边界。验证 SQLite `UserQuota` 持久化和消费者代码的通过／拒绝。 |
 | 5 | 同批迁移加密库口令检查、设置、撤销、状态和 `seafile_get_decrypt_key`。按库和用户管理进程内密钥。 | 1 | v1 加密库通过 C／Go 密钥对拍和明文摘要校验。补齐 C 支持的各加密版本样本，覆盖错误口令、用户隔离、过期、撤销和重启。 |
-| 6 | 同批迁移持久库同步令牌的发放、列举，以及按令牌、账号和设备撤销。接通 `RepoUserToken`、`RepoTokenPeerInfo` 和同步消费者的失效路径。 | 1 | 覆盖新旧令牌、有无设备信息、不同账号、SQLite 事务失败后重试、重启后读取。先用独立 Go fileserver 进程加载令牌缓存，撤销成功返回后，下一次经原缓存路径的请求立即被拒绝。 |
+| 6 | 同批迁移持久库同步令牌的发放、列举，以及按令牌、账号和设备撤销。接通 `RepoUserToken`、`RepoTokenPeerInfo` 和同步消费者的失效路径。 | 1 | 覆盖新旧令牌、有无设备信息、不同账号、SQLite 事务失败后重试、重启后读取。用独立 Go fileserver 测试进程接入 SQLite，通过现有 HTTP 处理函数预热缓存，验证下一次请求在撤销后立即被拒绝。常规 Go fileserver 的 SQLite 启动与部署回归纳入阶段 6。 |
 | 7 | 补齐本地账号管理。优先迁 `add_emailuser`、`validate_emailuser`、`update_emailuser`、`update_role_emailuser`、`update_emailuser_id`、`remove_emailuser` 和管理页用到的列表。 | 1、6 | 覆盖旧密码记录校验与升级、重复账号、改名、禁用、角色、分页与 C 接管后的登录读写。对拍账号变更引起的引用和令牌状态变化。 |
 | 8 | 迁移群组创建、改名、成员增删、管理员变更和删除。补齐客户端实际使用的群组读接口。 | 1、2 | 覆盖嵌套群组、祖先继承、管理员标记、删除后的分享可见性、重复操作和中途失败后的恢复。已有群组分页与授权用例通过。 |
 | 9 | 迁移组织、组织成员和组织群组关系的管理入口。 | 1、7、8 | 加入两个组织共用成员的合成样本。对拍组织范围、成员与群组关系、分页，以及删除等跨库操作失败后可观察的状态。 |

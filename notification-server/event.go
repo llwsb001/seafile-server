@@ -3,8 +3,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"reflect"
-	"runtime/debug"
 	"time"
 
 	log "github.com/sirupsen/logrus"
@@ -88,8 +86,6 @@ func Notify(msg *Message) {
 		return
 	}
 
-	clients := make(map[uint64]*Client)
-
 	subMutex.RLock()
 	subscribers := subscriptions[repoID]
 	if subscribers == nil {
@@ -99,34 +95,31 @@ func Notify(msg *Message) {
 	subMutex.RUnlock()
 
 	subscribers.Mutex.RLock()
-	for clientID, client := range subscribers.Clients {
-		clients[clientID] = client
+	clients := make([]*Client, 0, len(subscribers.Clients))
+	for _, client := range subscribers.Clients {
+		clients = append(clients, client)
 	}
 	subscribers.Mutex.RUnlock()
 
-	go func() {
-		defer func() {
-			if err := recover(); err != nil {
-				log.Printf("panic: %v\n%s", err, debug.Stack())
-			}
-		}()
-		// In order to avoid being blocked on a Client for a long time, it is necessary to write WCh in a non-blocking way,
-		// and the waiting WCh needs to be blocked and processed after other Clients have finished writing.
-		value := reflect.ValueOf(msg)
-		var branches []reflect.SelectCase
-		for _, client := range clients {
-			if !needToNotif(userList, client.User) {
-				continue
-			}
-			branch := reflect.SelectCase{Dir: reflect.SelectSend, Chan: reflect.ValueOf(client.WCh), Send: value}
-			branches = append(branches, branch)
+	// Enqueue before acknowledging the HTTP request so sequential branch
+	// notifications, including both parts of a merge, arrive in order.
+	var waiting []*Client
+	for _, client := range clients {
+		if !needToNotif(userList, client.username()) {
+			continue
 		}
-
-		for len(branches) != 0 {
-			index, _, _ := reflect.Select(branches)
-			branches = append(branches[:index], branches[index+1:]...)
+		select {
+		case client.WCh <- msg:
+		default:
+			waiting = append(waiting, client)
 		}
-	}()
+	}
+	for _, client := range waiting {
+		select {
+		case client.WCh <- msg:
+		case <-client.ConnCloser.HasBeenClosed():
+		}
+	}
 }
 
 func getGroupMembers(group int) map[string]struct{} {

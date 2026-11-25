@@ -74,6 +74,15 @@ func loadNotifConfig() {
 }
 
 func loadCcnetDB() {
+	if sqlitePath := os.Getenv("NOTIFICATION_SERVER_SQLITE_GROUP_DB"); sqlitePath != "" {
+		db, err := openSQLiteGroupDB(sqlitePath)
+		if err != nil {
+			log.Fatalf("Failed to open SQLite group database: %v", err)
+		}
+		ccnetDB = db
+		return
+	}
+
 	option, err := loadDBOptionFromEnv()
 	if err != nil {
 		log.Fatalf("Failed to load database from env: %v", err)

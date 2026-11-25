@@ -122,6 +122,8 @@ func run(ctx context.Context, args []string) error {
 		maps.Copy(handlers, serverConfig.RPCHandlers(writer))
 		maps.Copy(handlers, quota.ManagementRPCHandlers(writer))
 		maps.Copy(handlers, reader.SyncTokenRPCHandlers(writer))
+		maps.Copy(handlers, reader.RepoCreationRPCHandlers(writer))
+		maps.Copy(handlers, reader.DirectoryShareRPCHandlers(writer))
 		if ccnetDir != "" {
 			groupManagement, err := seafserver.OpenGroupManagement(ccnetDir, writer)
 			if err != nil {

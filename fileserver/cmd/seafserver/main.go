@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 
@@ -70,5 +71,10 @@ func run(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	return searpc.Serve(ctx, listener, seafserver.RPCService, reader.RPCHandlers())
+	// The C server reads keep_days as a signed decimal integer.
+	keepDays, err := strconv.ParseInt(config.Section("history").Key("keep_days").String(), 10, 32)
+	if err != nil {
+		keepDays = -1
+	}
+	return searpc.Serve(ctx, listener, seafserver.RPCService, reader.RPCHandlers(int(keepDays)))
 }

@@ -80,6 +80,7 @@ func run(ctx context.Context, args []string) error {
 	reader := seafserver.NewReader(db, dataDir)
 	serverConfig := seafserver.NewServerConfig(db, confData)
 	handlers := reader.RPCHandlers(serverConfig)
+	maps.Copy(handlers, seafserver.EventRPCHandlers())
 	if ccnetDir != "" {
 		identity, err := seafserver.OpenIdentityReadOnly(ctx, ccnetDir)
 		if err != nil {
@@ -113,6 +114,12 @@ func run(ctx context.Context, args []string) error {
 			}
 			defer accounts.Close()
 			maps.Copy(handlers, accounts.RPCHandlers())
+			groupManagement, err := seafserver.OpenGroupManagement(ccnetDir, writer)
+			if err != nil {
+				return err
+			}
+			defer groupManagement.Close()
+			maps.Copy(handlers, groupManagement.RPCHandlers())
 		}
 	}
 	tokenMode, tokenTTL, err := webTokenSettings(confData, os.Getenv("ENABLE_GO_FILESERVER"))

@@ -5,8 +5,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"strconv"
-	"strings"
 
 	"github.com/haiwen/seafile-server/fileserver/repomgr"
 	"github.com/haiwen/seafile-server/fileserver/searpc"
@@ -51,45 +49,26 @@ func (r *Reader) getRepoStatus(ctx context.Context, args []json.RawMessage) (any
 	return status, nil
 }
 
-func (r *Reader) getRepoHistoryLimit(defaultKeepDays int) searpc.Handler {
+func (r *Reader) getRepoHistoryLimit(config *ServerConfig) searpc.Handler {
 	return func(ctx context.Context, args []json.RawMessage) (any, *searpc.RPCError) {
 		repoID := stringArgument(args, 0)
 		if repoID == nil || !validRepoID(*repoID) {
 			return -1, rpcError(errBadArgs, "Invalid repo id")
 		}
-		return r.historyLimit(ctx, *repoID, defaultKeepDays), nil
+		return r.historyLimit(ctx, *repoID, config), nil
 	}
 }
 
-func (r *Reader) historyLimit(ctx context.Context, repoID string, defaultKeepDays int) int {
+func (r *Reader) historyLimit(ctx context.Context, repoID string, config *ServerConfig) int {
 	const query = `SELECT COALESCE(days, 0) FROM RepoHistoryLimit
 		WHERE repo_id = COALESCE((SELECT origin_repo FROM VirtualRepo WHERE repo_id = ?), ?)`
 	var days int
 	err := r.db.QueryRowContext(ctx, query, repoID, repoID).Scan(&days)
 	if errors.Is(err, sql.ErrNoRows) {
-		return r.globalHistoryLimit(ctx, defaultKeepDays)
+		return max(-1, config.value(ctx, "history", "keep_days").int())
 	}
 	if err != nil || days < 0 {
 		return -1
 	}
 	return days
-}
-
-func (r *Reader) globalHistoryLimit(ctx context.Context, defaultKeepDays int) int {
-	var value sql.NullString
-	err := r.db.QueryRowContext(ctx, "SELECT value FROM SeafileConf WHERE cfg_group = ? AND cfg_key = ?",
-		"history", "keep_days").Scan(&value)
-	if err != nil || !value.Valid {
-		return max(-1, defaultKeepDays)
-	}
-	trimmed := strings.Trim(value.String, " \t\r\n\v\f")
-	if trimmed == "" {
-		return 0
-	}
-	days, err := strconv.ParseInt(trimmed, 10, 64)
-	days = int64(int32(days))
-	if err != nil || days < 0 {
-		return -1
-	}
-	return int(days)
 }

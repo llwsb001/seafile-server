@@ -26,6 +26,10 @@ func (s *Identity) RPCHandlers() map[string]searpc.Handler {
 }
 
 func intArgument(args []json.RawMessage, index int) int {
+	return int(int32(int64Argument(args, index)))
+}
+
+func int64Argument(args []json.RawMessage, index int) int64 {
 	var value int64
 	if index < len(args) {
 		// Searpc's Jansson marshaller gives missing and noninteger values zero.
@@ -33,7 +37,7 @@ func intArgument(args []json.RawMessage, index int) int {
 			return 0
 		}
 	}
-	return int(int32(value))
+	return value
 }
 
 func (s *Identity) getEmailUserRPC(ctx context.Context, args []json.RawMessage) (any, *searpc.RPCError) {

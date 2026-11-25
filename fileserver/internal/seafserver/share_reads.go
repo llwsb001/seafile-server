@@ -35,7 +35,8 @@ func (r *Reader) listShareRepos(ctx context.Context, args []json.RawMessage) (an
 	if *direction == "to_email" {
 		from, to = to, from
 	}
-	// Filter before filling missing metadata from commits so page boundaries match C.
+	// Apply pagination to stored metadata before reading fallback commits.
+	// C writes back fallback timestamps, which can change its subsequent page order.
 	query := "SELECT " + shareRepoColumns + ", sh." + to + ", 0, origin.name" +
 		" FROM SharedRepo sh " + shareRepoJoins + " LEFT JOIN RepoInfo origin ON origin.repo_id = v.origin_repo" +
 		" WHERE sh." + from + " = ? ORDER BY i.update_time DESC, sh.repo_id, sh.rowid LIMIT ? OFFSET ?"

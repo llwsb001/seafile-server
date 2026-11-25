@@ -70,5 +70,6 @@ func run(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	return searpc.Serve(ctx, listener, seafserver.RPCService, reader.RPCHandlers())
+	keepDays := config.Section("history").Key("keep_days").MustInt(-1)
+	return searpc.Serve(ctx, listener, seafserver.RPCService, reader.RPCHandlers(keepDays))
 }

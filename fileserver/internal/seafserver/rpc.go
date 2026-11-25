@@ -24,12 +24,16 @@ const (
 )
 
 // RPCHandlers exposes the repository reads using the existing Searpc names.
-func (r *Reader) RPCHandlers() map[string]searpc.Handler {
+func (r *Reader) RPCHandlers(defaultKeepDays int) map[string]searpc.Handler {
 	return map[string]searpc.Handler{
 		"seafile_get_repo":            r.getRepo,
 		"seafile_get_commit":          r.getCommit,
 		"seafile_list_dir_by_path":    r.listDirByPath,
 		"seafile_get_file_id_by_path": r.fileIDByPath,
+		"seafile_get_repo_owner":      r.getRepoOwner,
+		"seafile_is_repo_owner":       r.isRepoOwner,
+		"get_repo_status":             r.getRepoStatus,
+		"get_repo_history_limit":      r.getRepoHistoryLimit(defaultKeepDays),
 	}
 }
 
@@ -184,12 +188,16 @@ func optionalString(value string) any {
 }
 
 func creatorName(value string) any {
-	return optionalString(strings.Map(func(r rune) rune {
+	return optionalString(asciiLower(value))
+}
+
+func asciiLower(value string) string {
+	return strings.Map(func(r rune) rune {
 		if r >= 'A' && r <= 'Z' {
 			return r + ('a' - 'A')
 		}
 		return r
-	}, value))
+	}, value)
 }
 
 func repoObject(repo *repomgr.Repo) map[string]any {

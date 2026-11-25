@@ -355,6 +355,13 @@ func GetEmailByToken(repoID string, token string) (string, error) {
 
 // GetRepoStatus return repo status by repo id.
 func GetRepoStatus(repoID string) (int, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), option.DBOpTimeout)
+	defer cancel()
+	return LoadRepoStatus(ctx, seafileDB, repoID)
+}
+
+// LoadRepoStatus reads the effective status, checking a virtual repo's origin first.
+func LoadRepoStatus(ctx context.Context, db *sql.DB, repoID string) (int, error) {
 	var status int = -1
 
 	// First, check origin repo's status.
@@ -362,9 +369,7 @@ func GetRepoStatus(repoID string) (int, error) {
 		"ON i.repo_id=v.origin_repo WHERE v.repo_id=? " +
 		"AND i.repo_id IS NOT NULL"
 
-	ctx, cancel := context.WithTimeout(context.Background(), option.DBOpTimeout)
-	defer cancel()
-	row := seafileDB.QueryRowContext(ctx, sqlStr, repoID)
+	row := db.QueryRowContext(ctx, sqlStr, repoID)
 	if err := row.Scan(&status); err != nil {
 		if err != sql.ErrNoRows {
 			return status, err
@@ -378,7 +383,7 @@ func GetRepoStatus(repoID string) (int, error) {
 
 	// Then, check repo's own status.
 	sqlStr = "SELECT status FROM RepoInfo WHERE repo_id=?"
-	row = seafileDB.QueryRowContext(ctx, sqlStr, repoID)
+	row = db.QueryRowContext(ctx, sqlStr, repoID)
 	if err := row.Scan(&status); err != nil {
 		if err != sql.ErrNoRows {
 			return status, err
@@ -715,19 +720,20 @@ func IsVirtualRepo(repoID string) (bool, error) {
 
 // GetRepoOwner get the owner of repo.
 func GetRepoOwner(repoID string) (string, error) {
-	var owner string
-	sqlStr := "SELECT owner_id FROM RepoOwner WHERE repo_id=?"
-
 	ctx, cancel := context.WithTimeout(context.Background(), option.DBOpTimeout)
 	defer cancel()
-	row := seafileDB.QueryRowContext(ctx, sqlStr, repoID)
-	if err := row.Scan(&owner); err != nil {
-		if err != sql.ErrNoRows {
-			return "", err
-		}
+	owner, err := LoadRepoOwner(ctx, seafileDB, repoID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
 	}
+	return owner, err
+}
 
-	return owner, nil
+// LoadRepoOwner reads the stored owner ID for the logical repository.
+func LoadRepoOwner(ctx context.Context, db *sql.DB, repoID string) (string, error) {
+	var owner string
+	err := db.QueryRowContext(ctx, "SELECT owner_id FROM RepoOwner WHERE repo_id=?", repoID).Scan(&owner)
+	return owner, err
 }
 
 func UpdateRepoInfo(repoID, commitID string) error {

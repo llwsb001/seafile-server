@@ -1,0 +1,316 @@
+package seafserver
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"log"
+	"math"
+	"strings"
+
+	"github.com/haiwen/seafile-server/fileserver/fsmgr"
+	"github.com/haiwen/seafile-server/fileserver/repomgr"
+	"github.com/haiwen/seafile-server/fileserver/searpc"
+)
+
+// FileMoveLimits contains the optional limits from the web_copy configuration.
+type FileMoveLimits struct {
+	MaxFiles int64
+	MaxBytes int64
+}
+
+type crossLibraryMove struct {
+	fromRepo, toRepo string
+	user             string
+	fromPath, toPath []string
+	names, targets   []string
+	replace          bool
+}
+
+func (w *fileWriter) moveBetweenLibraries(ctx context.Context, values []string, user string, args []json.RawMessage) (any, *searpc.RPCError) {
+	from, rpcErr := fileWritePath(values[1])
+	if rpcErr != nil {
+		return nil, rpcErr
+	}
+	to, rpcErr := fileWritePath(values[4])
+	if rpcErr != nil {
+		return nil, rpcErr
+	}
+	names, validSource := fileNames(values[2])
+	targets, validTarget := fileNames(values[5])
+	if !validSource || !validTarget {
+		return nil, rpcError(errBadArgs, "Load filenames to json failed")
+	}
+	if len(names) != len(targets) {
+		return nil, rpcError(errBadArgs, "The number of files in the parameters does not match")
+	}
+	seen := make(map[string]bool, len(names))
+	for _, name := range names {
+		if seen[name] {
+			return nil, rpcError(errBadArgs, "Duplicate source filename")
+		}
+		seen[name] = true
+	}
+	move := crossLibraryMove{fromRepo: values[0], toRepo: values[3], user: user,
+		fromPath: from, toPath: to, names: names, targets: targets, replace: intArgument(args, 6) > 0}
+	if intArgument(args, 9) == 0 {
+		if _, rpcErr := w.moveTrees(ctx, move); rpcErr != nil {
+			return nil, rpcErr
+		}
+		return w.moves.submit(intArgument(args, 8) != 0, func(ctx context.Context, task *fileMoveTask) *searpc.RPCError {
+			return w.runCrossMove(ctx, move, task)
+		})
+	}
+	if rpcErr := w.runCrossMove(ctx, move, nil); rpcErr != nil {
+		if rpcErr.Code == errGeneral {
+			return nil, rpcError(errGeneral, "Failed to move")
+		}
+		return nil, rpcErr
+	}
+	return map[string]any{"background": false, "task-id": nil}, nil
+}
+
+func (w *fileWriter) moveTrees(ctx context.Context, move crossLibraryMove) ([2]*fileTree, *searpc.RPCError) {
+	var trees [2]*fileTree
+	for i, repoID := range []string{move.fromRepo, move.toRepo} {
+		tree, rpcErr := w.writableTree(ctx, repoID, move.user)
+		if rpcErr != nil {
+			return trees, rpcErr
+		}
+		if tree.repo.IsEncrypted {
+			return trees, rpcError(errBadArgs, "Cross-library move requires unencrypted libraries")
+		}
+		owner, err := repomgr.LoadRepoOwner(ctx, w.reader.db, repoID)
+		if err != nil {
+			return trees, fileWriteFailure("read cross-library move owner", err)
+		}
+		if asciiLower(owner) != asciiLower(move.user) {
+			return trees, rpcError(errRepoAuth, "Cross-library move requires ownership of both libraries")
+		}
+		trees[i] = tree
+	}
+	return trees, nil
+}
+
+func (w *fileWriter) runCrossMove(ctx context.Context, move crossLibraryMove, task *fileMoveTask) *searpc.RPCError {
+	for range maxFileWriteRetries {
+		trees, rpcErr := w.moveTrees(ctx, move)
+		if rpcErr != nil {
+			return rpcErr
+		}
+		from, to := trees[0], trees[1]
+		copy := libraryCopy{ctx: ctx, from: from, to: to, task: task, limits: w.limits}
+		fromDesc, toDesc, rpcErr := copy.apply(move, w.quota)
+		if rpcErr != nil {
+			return rpcErr
+		}
+		if _, rpcErr := w.moveTrees(ctx, move); rpcErr != nil {
+			return rpcErr
+		}
+		err := w.publishMove(ctx, from, to, fromDesc, toDesc, task)
+		if errors.Is(err, ErrSQLiteBranchChanged) {
+			continue
+		}
+		if err != nil {
+			return fileWriteFailure("publish cross-library move", err)
+		}
+		return nil
+	}
+	return rpcError(520, "Concurrent update")
+}
+
+func (w *fileWriter) publishMove(ctx context.Context, from, to *fileTree, fromDesc, toDesc string, task *fileMoveTask) error {
+	fromCommit, err := w.prepareCommit(from, fromDesc)
+	if err != nil {
+		return err
+	}
+	toCommit, err := w.prepareCommit(to, toDesc)
+	if err != nil {
+		return err
+	}
+	if task != nil {
+		task.mu.Lock()
+		defer task.mu.Unlock()
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	_, err = withSQLiteWrite(ctx, w.db, func(conn *sql.Conn) (bool, error) {
+		if _, err := publishSQLiteBranch(ctx, conn, to.repo.HeadCommitID, toCommit); err != nil {
+			return false, err
+		}
+		return publishSQLiteBranch(ctx, conn, from.repo.HeadCommitID, fromCommit)
+	})
+	if err == nil && task != nil {
+		task.finished = true
+	}
+	return err
+}
+
+type libraryCopy struct {
+	ctx      context.Context
+	from, to *fileTree
+	task     *fileMoveTask
+	limits   FileMoveLimits
+}
+
+func (c *libraryCopy) apply(move crossLibraryMove, quota *UserQuota) (string, string, *searpc.RPCError) {
+	fromDir, rpcErr := c.from.reader.directoryByPath(c.from.repo, c.from.root, strings.Join(move.fromPath, "/"))
+	if rpcErr != nil {
+		return "", "", rpcError(errGeneral, "Internal error when copy or move")
+	}
+	if _, rpcErr := c.to.reader.directoryByPath(c.to.repo, c.to.root, strings.Join(move.toPath, "/")); rpcErr != nil {
+		return "", "", rpcError(errGeneral, "Internal error when copy or move")
+	}
+	entries := make([]*fsmgr.SeafDirent, 0, len(move.names))
+	var total copyTotal
+	for _, name := range move.names {
+		index := findEntry(fromDir.Entries, name)
+		if index == -1 {
+			return "", "", rpcError(errGeneral, "Internal error when copy or move")
+		}
+		entry := fromDir.Entries[index]
+		if rpcErr := c.count(entry, &total); rpcErr != nil {
+			return "", "", rpcErr
+		}
+		entries = append(entries, entry)
+	}
+	if quota.check(c.ctx, c.to.repo.ID, total.bytes) != 0 {
+		return "", "", rpcError(errGeneral, "Quota is full")
+	}
+	if c.task != nil {
+		c.task.setTotal(total.files)
+	}
+
+	moved := make([]*fsmgr.SeafDirent, 0, len(entries))
+	for i, entry := range entries {
+		next, rpcErr := c.copyEntry(entry, move.targets[i])
+		if rpcErr != nil {
+			return "", "", rpcErr
+		}
+		moved = append(moved, next)
+	}
+	if rpcErr := c.to.insertMoved(move.toPath, moved, move.replace); rpcErr != nil {
+		return "", "", rpcErr
+	}
+	deleted, rpcErr := c.from.remove(move.fromPath, move.names)
+	if rpcErr != nil {
+		return "", "", rpcErr
+	}
+	return describeDeleted(deleted), describeMoveTarget(move.targets, moved[0].Mode), nil
+}
+
+func describeMoveTarget(names []string, mode uint32) string {
+	if len(names) > 1 {
+		return fmt.Sprintf("Added \"%s\" and %d more files", names[0], len(names)-1)
+	}
+	if fsmgr.IsDir(mode) {
+		return fmt.Sprintf("Added directory \"%s\"", names[0])
+	}
+	return fmt.Sprintf("Added \"%s\"", names[0])
+}
+
+type copyTotal struct {
+	files, bytes int64
+}
+
+func (c *libraryCopy) count(entry *fsmgr.SeafDirent, total *copyTotal) *searpc.RPCError {
+	if err := c.ctx.Err(); err != nil {
+		return copyFailure(err)
+	}
+	if fsmgr.IsDir(entry.Mode) {
+		dir, err := c.from.reader.Directory(c.from.repo, entry.ID)
+		if err != nil {
+			return copyFailure(err)
+		}
+		for _, child := range dir.Entries {
+			if rpcErr := c.count(child, total); rpcErr != nil {
+				return rpcErr
+			}
+		}
+		return nil
+	}
+	if !fsmgr.IsRegular(entry.Mode) {
+		return rpcError(errGeneral, "Invalid arguments")
+	}
+	file, err := c.from.reader.File(c.from.repo, entry.ID)
+	if err != nil {
+		return copyFailure(err)
+	}
+	total.files++
+	if c.limits.MaxFiles > 0 && total.files > c.limits.MaxFiles {
+		return rpcError(errGeneral, "Too many files")
+	}
+	if file.FileSize > uint64(math.MaxInt64-total.bytes) {
+		return rpcError(errGeneral, "Folder or file size is too large")
+	}
+	total.bytes += int64(file.FileSize)
+	if c.limits.MaxBytes > 0 && total.bytes > c.limits.MaxBytes {
+		return rpcError(errGeneral, "Folder or file size is too large")
+	}
+	return nil
+}
+
+func (c *libraryCopy) copyEntry(entry *fsmgr.SeafDirent, name string) (*fsmgr.SeafDirent, *searpc.RPCError) {
+	if err := c.ctx.Err(); err != nil {
+		return nil, copyFailure(err)
+	}
+	id := entry.ID
+	var size int64
+	if fsmgr.IsDir(entry.Mode) {
+		dir, err := c.from.reader.Directory(c.from.repo, id)
+		if err != nil {
+			return nil, copyFailure(err)
+		}
+		copied := make([]*fsmgr.SeafDirent, 0, len(dir.Entries))
+		for _, child := range dir.Entries {
+			next, rpcErr := c.copyEntry(child, child.Name)
+			if rpcErr != nil {
+				return nil, rpcErr
+			}
+			copied = append(copied, next)
+		}
+		var rpcErr *searpc.RPCError
+		id, rpcErr = c.to.save(copied)
+		if rpcErr != nil {
+			return nil, rpcErr
+		}
+	} else {
+		file, err := c.from.reader.File(c.from.repo, id)
+		if err != nil {
+			return nil, copyFailure(err)
+		}
+		size = int64(file.FileSize)
+		for _, block := range file.BlkIDs {
+			if err := c.ctx.Err(); err != nil {
+				return nil, copyFailure(err)
+			}
+			if exists, err := c.to.reader.blocks.Exists(c.to.repo.StoreID, block); err == nil && exists {
+				// A previous move can leave a block in place after a failed directory sync.
+				if err := c.to.reader.blocks.Sync(c.to.repo.StoreID, block); err != nil {
+					return nil, copyFailure(err)
+				}
+				continue
+			}
+			if err := c.from.reader.blocks.Copy(c.from.repo.StoreID, c.to.repo.StoreID, block); err != nil {
+				return nil, copyFailure(err)
+			}
+		}
+		if id != fsmgr.EmptySha1 {
+			if err := c.from.reader.fs.Copy(c.from.repo.StoreID, c.to.repo.StoreID, id); err != nil {
+				return nil, copyFailure(err)
+			}
+		}
+		if c.task != nil {
+			c.task.completeFile()
+		}
+	}
+	return fsmgr.NewDirent(id, name, entry.Mode, entry.Mtime, c.to.user, size), nil
+}
+
+func copyFailure(err error) *searpc.RPCError {
+	log.Printf("copy SQLite library objects: %v", err)
+	return rpcError(errGeneral, "Internal error when copy or move")
+}

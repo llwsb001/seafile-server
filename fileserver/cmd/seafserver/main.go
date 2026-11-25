@@ -84,6 +84,7 @@ func run(ctx context.Context, args []string) error {
 		keepDays = -1
 	}
 	handlers := reader.RPCHandlers(int(keepDays))
+	maps.Copy(handlers, seafserver.EventRPCHandlers())
 	if ccnetDir != "" {
 		identity, err := seafserver.OpenIdentityReadOnly(ctx, ccnetDir)
 		if err != nil {

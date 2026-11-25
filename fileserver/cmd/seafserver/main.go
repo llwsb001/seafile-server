@@ -52,6 +52,9 @@ func run(ctx context.Context, args []string) error {
 	if enableShareWrites && ccnetDir == "" {
 		return errors.New("--enable-share-writes requires -c")
 	}
+	if err := seafserver.CheckNotificationConfig(); err != nil {
+		return err
+	}
 	if confDir == "" {
 		confDir = dataDir
 	}

@@ -2363,45 +2363,14 @@ func onBranchUpdated(repoID string, commitID string, updateRepoInfo bool) error 
 	return nil
 }
 
-type notifEvent struct {
-	Type    string           `json:"type"`
-	Content *repoUpdateEvent `json:"content"`
-}
-type repoUpdateEvent struct {
-	RepoID   string `json:"repo_id"`
-	CommitID string `json:"commit_id"`
-}
-
 func notifRepoUpdate(repoID string, commitID string) error {
-	content := new(repoUpdateEvent)
-	content.RepoID = repoID
-	content.CommitID = commitID
-	event := new(notifEvent)
-	event.Type = "repo-update"
-	event.Content = content
-	msg, err := json.Marshal(event)
-	if err != nil {
-		log.Errorf("failed to encode repo update event: %v", err)
-		return err
-	}
-
-	url := fmt.Sprintf("%s/events", option.NotificationURL)
-	exp := time.Now().Add(time.Second * 300).Unix()
-	token, err := utils.GenNotifJWTToken(repoID, "", exp)
-	if err != nil {
-		log.Errorf("failed to generate jwt token: %v", err)
-		return err
-	}
-	header := map[string][]string{
-		"Authorization": {"Token " + token},
-	}
-	_, _, err = utils.HttpCommon("POST", url, header, bytes.NewReader(msg))
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+	err := utils.SendRepoUpdate(ctx, option.NotificationURL, option.JWTPrivateKey, repoID, commitID)
 	if err != nil {
 		log.Warnf("failed to send repo update event: %v", err)
-		return err
 	}
-
-	return nil
+	return err
 }
 
 func doPostMultiFiles(repo *repomgr.Repo, rootID, parentDir string, dents []*fsmgr.SeafDirent, user string, replace bool, names *[]string) (string, error) {

@@ -401,7 +401,7 @@ class SeafServerThreadedRpcClient(NamedPipeClient):
         pass
     generate_repo_token = seafile_generate_repo_token
 
-    @searpc_func("int", ["string", "string"])
+    @searpc_func("int", ["string", "string", "string"])
     def seafile_delete_repo_token(repo_id, token, user):
         pass
     delete_repo_token = seafile_delete_repo_token

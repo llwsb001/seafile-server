@@ -1333,7 +1333,8 @@ func validateToken(r *http.Request, repoID string, skipCache bool) (string, *app
 		}
 	}
 
-	if !skipCache {
+	// SQLite revocations are committed by the separate core process.
+	if !skipCache && !repomgr.UsesSQLite() {
 		if value, ok := tokenCache.Load(token); ok {
 			if info, ok := value.(*tokenInfo); ok {
 				if info.repoID != repoID {

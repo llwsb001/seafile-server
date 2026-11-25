@@ -4,7 +4,7 @@
 
 ## 起点
 
-- 首批四个 SQLite 只读 RPC 已经合入。库所有者、状态和历史保留的第二批实现与对拍分别在服务端和兼容仓库。后续实现如果直接复用这批改动，可以以前置分支为基线。 [只读 RPC](https://github.com/llwsb001/seafile-server/pull/6) · [库属性 RPC](https://github.com/llwsb001/seafile-server/pull/7) · [库属性对拍](https://github.com/llwsb001/seafile-compat-tests/pull/4)
+- 首批四个 SQLite 只读 RPC、库所有者／状态／历史保留 RPC 及其对拍均已合入。后续实现以两个仓库的默认分支为基线。 [只读 RPC](https://github.com/llwsb001/seafile-server/pull/6) · [库属性 RPC](https://github.com/llwsb001/seafile-server/pull/7) · [库属性对拍](https://github.com/llwsb001/seafile-compat-tests/pull/4)
 - v1 有 3 条 `EmailUser` 记录和 1 条 `SharedRepo` 记录。`Group`、`GroupUser`、`Organization`、`RepoGroup` 和 `InnerPubRepo` 为空。本批在兼容仓库新增 v2，v1 继续跑存储和原有只读 RPC 回归。 [样本规则](https://github.com/llwsb001/seafile-compat-tests/blob/main/fixtures/SPEC.md)
 
 ## PR 顺序
@@ -21,7 +21,7 @@
 
 - 当前 Go 命令从 `-d` 打开主库。本批按 C 的目录约定从 `-c` 读取 `PeerMgr/usermgr.db`、`GroupMgr/groupmgr.db` 和 `OrgMgr/orgmgr.db`。把读库连接传给业务查询，主库与身份库各自按只读打开。身份查询和权限判定共用群组成员与祖先关系读取。 [Go 启动入口](../fileserver/cmd/seafserver/main.go) · [用户库](../common/user-mgr.c#L273) · [群组库](../common/group-mgr.c#L57) · [组织库](../common/org-mgr.c#L46)
 - 以 C 注册表和实际 Python 调用确认参数与返回值。`get_group_members` 的 C 签名有 `group_id`、`start`、`limit`，`seaserv.api` 会传三个参数。`get_org_by_id` 在 C 注册为整数参数，Python 装饰器声明字符串。两处都按现有客户端发出的请求对拍。`get_emailuser` 会返回 `password` 字段，对拍仅使用合成账号，差异日志只列出字段名。 [C 注册表](../server/seaf-server.c#L824) · [Python 绑定](../python/seafile/rpcclient.py#L945) · [Python 调用](../python/seaserv/api.py#L1081) · [用户字段](../common/user-mgr.c#L619)
-- 普通库按所有者、个人分享、群组分享、内部公开的顺序判定。多个群组许可中 `rw` 优先于 `r`，`cloud_mode` 影响内部公开分支。虚拟库先判断源库所有者，再按个人分享与群组分享查找最近匹配的祖先路径，最后查源库的分享权限。当前 C 基线的 `check_permission_by_path` 直接调用 `check_permission`，对拍须包含同一库、同一用户和不同 `path` 的结果。 [C 权限判定](../server/repo-perm.c#L14) · [C RPC 入口](../common/rpc-service.c#L4042)
+- 普通库先读取所有者记录。没有记录时返回 `null`。有记录时按所有者、个人分享、群组分享、内部公开的顺序判定。多个群组许可中 `rw` 优先于 `r`，`cloud_mode` 禁用内部公开权限回退。虚拟库先判断源库所有者，再沿虚拟库路径及其祖先查找最近的个人分享。没有命中时，才沿同一路径查找群组分享，最后回退到源库的分享权限。当前 C 基线的 `check_permission_by_path` 直接调用 `check_permission`，对拍须包含同一库、同一用户和不同 `path` 的结果。 [C 权限判定](../server/repo-perm.c#L14) · [C RPC 入口](../common/rpc-service.c#L4042)
 - 现有 Go `fileserver/share` 可提供查询复用点。C 库权限判断请求含祖先的群组列表，Go `checkGroupPermByUser` 当前请求直接群组。两个调用场景先分别通过各自的回归，再决定哪些查询可以共享。SQLite 是本批对拍环境。若改动现有 Go fileserver 的查询入口，同时跑其 MySQL 回归。 [C 群组权限](../server/repo-perm.c#L38) · [Go 群组权限](../fileserver/share/share.go#L180) · [现有 CI 矩阵](../ci/run.py#L261)
 
 ## v2 场景与验收
@@ -31,7 +31,7 @@
 | 用户和组织 | 存在、缺失、禁用用户及邮箱大小写结果。对比同一用户在两个组织的成员判断，以及组织记录缺失时的响应。 |
 | 群组和成员 | 直接成员、祖先或后代关系、无关群组。对比 `return_ancestors`、`in_structure` 两种取值，以及成员列表的顺序、分页和空结果。 |
 | 普通库优先级 | 所有者 `rw`、个人 `r` 与群组 `rw` 同时存在、多个群组分别给 `r`／`rw`、内部公开及 `cloud_mode`、未分享的私有库。 |
-| 虚拟库与路径 | 源库所有者、祖先目录分享、近一级目录与祖先的冲突许可、回退到源库许可，以及相邻目录路径。另用相同库和用户调用两个权限 RPC 核对 CE 的行为。 |
+| 虚拟库与路径 | 源库所有者、同一分享类型中较近目录与祖先的冲突许可、较远祖先的个人分享与较近目录的群组分享同时存在、回退到源库许可，以及相邻目录路径。另用相同库和用户调用两个权限 RPC 核对 CE 的行为。 |
 | 取消授权与边界 | C 分别固定移除成员、取消分享前后的副本，两套实现读取相同状态。核对未知库、空用户名、缺失参数和非法 ID 的返回形状。 |
 
 每个实例使用独立数据库和对象目录副本。v2 的清单记录 C 提交、配置、每个用例依赖的快照及预期响应。原始 JSON 比较保留 `null`、整数和列表顺序，同一批请求也通过现有 Python 客户端比较解码后的结果。对拍失败时输出场景、方法和差异字段，记录可复现的样本版本。

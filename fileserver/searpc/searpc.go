@@ -3,6 +3,7 @@ package searpc
 
 import (
 	"bufio"
+	"context"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
@@ -42,28 +43,45 @@ func Init(pipePath string, service string, maxConn int) *Client {
 // The return value of the RPC function is return as interface{} type
 // The true returned type can be int32, int64, string, struct (object), list of struct (objects) or JSON
 func (c *Client) Call(funcname string, params ...interface{}) (interface{}, error) {
-	// TODO: use reflection to compose requests and parse results.
-
 	conn, err := c.getConn()
 	if err != nil {
 		return nil, err
 	}
 
-	hasErr := false
-	defer func() {
-		if hasErr {
-			conn.Close()
-		} else {
-			c.returnConn(conn)
-		}
-	}()
+	result, err := c.call(conn, funcname, params...)
+	if err != nil {
+		conn.Close()
+		return nil, err
+	}
+	c.returnConn(conn)
+	return result, nil
+}
 
+// CallContext makes a one-shot RPC call. Cancellation closes its connection so
+// it can also interrupt a peer that accepts the socket without replying.
+func (c *Client) CallContext(ctx context.Context, funcname string, params ...interface{}) (interface{}, error) {
+	var dialer net.Dialer
+	conn, err := dialer.DialContext(ctx, "unix", c.pipePath)
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+	stop := context.AfterFunc(ctx, func() { conn.Close() })
+	defer stop()
+
+	result, err := c.call(conn, funcname, params...)
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+	return result, err
+}
+
+func (c *Client) call(conn net.Conn, funcname string, params ...interface{}) (interface{}, error) {
 	var req []interface{}
 	req = append(req, funcname)
 	req = append(req, params...)
 	jsonstr, err := json.Marshal(req)
 	if err != nil {
-		hasErr = true
 		err := fmt.Errorf("failed to encode rpc call to json : %v", err)
 		return nil, err
 	}
@@ -74,7 +92,6 @@ func (c *Client) Call(funcname string, params ...interface{}) (interface{}, erro
 
 	jsonstr, err = json.Marshal(reqHeader)
 	if err != nil {
-		hasErr = true
 		err := fmt.Errorf("failed to convert object to json : %v", err)
 		return nil, err
 	}
@@ -83,14 +100,12 @@ func (c *Client) Call(funcname string, params ...interface{}) (interface{}, erro
 	binary.LittleEndian.PutUint32(header, uint32(len(jsonstr)))
 	_, err = conn.Write([]byte(header))
 	if err != nil {
-		hasErr = true
 		err := fmt.Errorf("Failed to write rpc request header : %v", err)
 		return nil, err
 	}
 
 	_, err = conn.Write([]byte(jsonstr))
 	if err != nil {
-		hasErr = true
 		err := fmt.Errorf("Failed to write rpc request body : %v", err)
 		return nil, err
 	}
@@ -99,7 +114,6 @@ func (c *Client) Call(funcname string, params ...interface{}) (interface{}, erro
 	buflen := make([]byte, 4)
 	_, err = io.ReadFull(reader, buflen)
 	if err != nil {
-		hasErr = true
 		err := fmt.Errorf("failed to read response header from rpc server : %v", err)
 		return nil, err
 	}
@@ -108,7 +122,6 @@ func (c *Client) Call(funcname string, params ...interface{}) (interface{}, erro
 	msg := make([]byte, retlen)
 	_, err = io.ReadFull(reader, msg)
 	if err != nil {
-		hasErr = true
 		err := fmt.Errorf("failed to read response body from rpc server : %v", err)
 		return nil, err
 	}
@@ -116,13 +129,11 @@ func (c *Client) Call(funcname string, params ...interface{}) (interface{}, erro
 	retlist := make(map[string]interface{})
 	err = json.Unmarshal(msg, &retlist)
 	if err != nil {
-		hasErr = true
 		err := fmt.Errorf("failed to decode rpc response : %v", err)
 		return nil, err
 	}
 
 	if _, ok := retlist["err_code"]; ok {
-		hasErr = true
 		err := fmt.Errorf("searpc server returned error : %v", retlist["err_msg"])
 		return nil, err
 	}
@@ -132,7 +143,6 @@ func (c *Client) Call(funcname string, params ...interface{}) (interface{}, erro
 		return ret, nil
 	}
 
-	hasErr = true
 	err = fmt.Errorf("No value returned")
 	return nil, err
 }

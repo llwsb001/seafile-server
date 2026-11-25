@@ -998,7 +998,12 @@ func putCommitCB(rsp http.ResponseWriter, r *http.Request) *appError {
 		return &appError{nil, msg, http.StatusBadRequest}
 	}
 
-	if err := commitmgr.Save(commit); err != nil {
+	if option.DBType == "sqlite" {
+		err = commitmgr.SaveRaw(repoID, commitID, bytes.NewReader(data))
+	} else {
+		err = commitmgr.Save(commit)
+	}
+	if err != nil {
 		err := fmt.Errorf("Failed to add commit %s: %v", commitID, err)
 		return &appError{err, "", http.StatusInternalServerError}
 	} else {

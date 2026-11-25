@@ -2,12 +2,13 @@
 package main
 
 import (
-	"crypto/tls"
-	"crypto/x509"
+	"context"
 	"database/sql"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -17,11 +18,11 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/go-sql-driver/mysql"
 	"github.com/gorilla/mux"
 	"github.com/haiwen/seafile-server/fileserver/blockmgr"
 	"github.com/haiwen/seafile-server/fileserver/commitmgr"
 	"github.com/haiwen/seafile-server/fileserver/fsmgr"
+	"github.com/haiwen/seafile-server/fileserver/internal/seafserver"
 	"github.com/haiwen/seafile-server/fileserver/metrics"
 	"github.com/haiwen/seafile-server/fileserver/option"
 	"github.com/haiwen/seafile-server/fileserver/repomgr"
@@ -35,6 +36,7 @@ import (
 
 var dataDir, absDataDir string
 var centralDir string
+var ccnetDir string
 var logFile, absLogFile string
 var rpcPipePath string
 var pidFilePath string
@@ -47,6 +49,7 @@ var logToStdout bool
 func init() {
 	flag.StringVar(&centralDir, "F", "", "central config directory")
 	flag.StringVar(&dataDir, "d", "", "seafile data directory")
+	flag.StringVar(&ccnetDir, "c", "", "ccnet config directory for SQLite")
 	flag.StringVar(&logFile, "l", "", "log file path")
 	flag.StringVar(&rpcPipePath, "p", "", "rpc pipe path")
 	flag.StringVar(&pidFilePath, "P", "", "pid file path")
@@ -88,130 +91,33 @@ func (f *LogFormatter) Format(entry *log.Entry) ([]byte, error) {
 	return buf, nil
 }
 
-func loadCcnetDB() {
-	dbOpt, err := option.LoadDBOption(centralDir)
-	if err != nil {
-		log.Fatalf("Failed to load database: %v", err)
-	}
-
-	var dsn string
-	timeout := "&readTimeout=60s" + "&writeTimeout=60s"
-	if dbOpt.UseTLS && dbOpt.SkipVerify {
-		dsn = fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?tls=skip-verify%s", dbOpt.User, dbOpt.Password, dbOpt.Host, dbOpt.Port, dbOpt.CcnetDbName, timeout)
-	} else if dbOpt.UseTLS && !dbOpt.SkipVerify {
-		registerCA(dbOpt.CaPath)
-		dsn = fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?tls=custom%s", dbOpt.User, dbOpt.Password, dbOpt.Host, dbOpt.Port, dbOpt.CcnetDbName, timeout)
-	} else {
-		dsn = fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?tls=%t%s", dbOpt.User, dbOpt.Password, dbOpt.Host, dbOpt.Port, dbOpt.CcnetDbName, dbOpt.UseTLS, timeout)
-	}
-	if dbOpt.Charset != "" {
-		dsn = fmt.Sprintf("%s&charset=%s", dsn, dbOpt.Charset)
-	}
-	ccnetDB, err = sql.Open("mysql", dsn)
-	if err != nil {
-		log.Fatalf("Failed to open database: %v", err)
-	}
-	ccnetDB.SetConnMaxLifetime(5 * time.Minute)
-	ccnetDB.SetMaxOpenConns(8)
-	ccnetDB.SetMaxIdleConns(8)
-}
-
-// registerCA registers CA to verify server cert.
-func registerCA(capath string) {
-	rootCertPool := x509.NewCertPool()
-	pem, err := os.ReadFile(capath)
-	if err != nil {
-		log.Fatal(err)
-	}
-	if ok := rootCertPool.AppendCertsFromPEM(pem); !ok {
-		log.Fatal("Failed to append PEM.")
-	}
-	mysql.RegisterTLSConfig("custom", &tls.Config{
-		RootCAs: rootCertPool,
-	})
-}
-
-func loadSeafileDB() {
-	dbOpt, err := option.LoadDBOption(centralDir)
-	if err != nil {
-		log.Fatalf("Failed to load database: %v", err)
-	}
-
-	var dsn string
-	timeout := "&readTimeout=60s" + "&writeTimeout=60s"
-	if dbOpt.UseTLS && dbOpt.SkipVerify {
-		dsn = fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?tls=skip-verify%s", dbOpt.User, dbOpt.Password, dbOpt.Host, dbOpt.Port, dbOpt.SeafileDbName, timeout)
-	} else if dbOpt.UseTLS && !dbOpt.SkipVerify {
-		registerCA(dbOpt.CaPath)
-		dsn = fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?tls=custom%s", dbOpt.User, dbOpt.Password, dbOpt.Host, dbOpt.Port, dbOpt.SeafileDbName, timeout)
-	} else {
-		dsn = fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?tls=%t%s", dbOpt.User, dbOpt.Password, dbOpt.Host, dbOpt.Port, dbOpt.SeafileDbName, dbOpt.UseTLS, timeout)
-	}
-	if dbOpt.Charset != "" {
-		dsn = fmt.Sprintf("%s&charset=%s", dsn, dbOpt.Charset)
-	}
-
-	seafileDB, err = sql.Open("mysql", dsn)
-	if err != nil {
-		log.Fatalf("Failed to open database: %v", err)
-	}
-	seafileDB.SetConnMaxLifetime(5 * time.Minute)
-	seafileDB.SetMaxOpenConns(8)
-	seafileDB.SetMaxIdleConns(8)
-}
-
-func writePidFile(pid_file_path string) error {
-	file, err := os.OpenFile(pid_file_path, os.O_CREATE|os.O_WRONLY, 0664)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-
-	pid := os.Getpid()
-	str := fmt.Sprintf("%d", pid)
-	_, err = file.Write([]byte(str))
-
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-func removePidfile(pid_file_path string) error {
-	err := os.Remove(pid_file_path)
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
 func main() {
 	flag.Parse()
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	if err := runFileServer(ctx); err != nil {
+		log.Fatal(err)
+	}
+}
 
+func runFileServer(ctx context.Context) error {
 	if centralDir == "" {
-		log.Fatal("central config directory must be specified.")
+		return errors.New("central config directory must be specified")
 	}
-
-	if pidFilePath != "" {
-		if writePidFile(pidFilePath) != nil {
-			log.Fatal("write pid file failed.")
-		}
-	}
-	_, err := os.Stat(centralDir)
-	if os.IsNotExist(err) {
-		log.Fatalf("central config directory %s doesn't exist: %v.", centralDir, err)
+	if _, err := os.Stat(centralDir); err != nil {
+		return fmt.Errorf("open central config directory: %w", err)
 	}
 
 	if dataDir == "" {
-		log.Fatal("seafile data directory must be specified.")
+		return errors.New("seafile data directory must be specified")
 	}
-	_, err = os.Stat(dataDir)
-	if os.IsNotExist(err) {
-		log.Fatalf("seafile data directory %s doesn't exist: %v.", dataDir, err)
+	if _, err := os.Stat(dataDir); err != nil {
+		return fmt.Errorf("open seafile data directory: %w", err)
 	}
+	var err error
 	absDataDir, err = filepath.Abs(dataDir)
 	if err != nil {
-		log.Fatalf("Failed to convert seafile data dir to absolute path: %v.", err)
+		return fmt.Errorf("resolve seafile data directory: %w", err)
 	}
 
 	if logToStdout {
@@ -220,18 +126,18 @@ func main() {
 		absLogFile = filepath.Join(absDataDir, "fileserver.log")
 		fp, err := os.OpenFile(absLogFile, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0644)
 		if err != nil {
-			log.Fatalf("Failed to open or create log file: %v", err)
+			return fmt.Errorf("open fileserver log: %w", err)
 		}
 		logFp = fp
 		log.SetOutput(fp)
 	} else if logFile != "-" {
 		absLogFile, err = filepath.Abs(logFile)
 		if err != nil {
-			log.Fatalf("Failed to convert log file path to absolute path: %v", err)
+			return fmt.Errorf("resolve fileserver log path: %w", err)
 		}
 		fp, err := os.OpenFile(absLogFile, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0644)
 		if err != nil {
-			log.Fatalf("Failed to open or create log file: %v", err)
+			return fmt.Errorf("open fileserver log: %w", err)
 		}
 		logFp = fp
 		log.SetOutput(fp)
@@ -243,12 +149,26 @@ func main() {
 	// When logFile is "-", use default output (StdOut)
 
 	if err := option.LoadSeahubConfig(); err != nil {
-		log.Fatalf("Failed to read seahub config: %v", err)
+		return fmt.Errorf("read seahub config: %w", err)
+	}
+	option.LoadFileServerOptions(centralDir)
+	dbOptions, err := option.LoadDBOption(centralDir)
+	if err != nil {
+		return fmt.Errorf("load database configuration: %w", err)
 	}
 
-	option.LoadFileServerOptions(centralDir)
-	loadCcnetDB()
-	loadSeafileDB()
+	startup, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	seafileDB, ccnetDB, err = openDatabases(startup, dbOptions)
+	if err != nil {
+		return err
+	}
+	defer seafileDB.Close()
+	defer ccnetDB.Close()
+	if err := rpcClientInit(startup, dbOptions.DBEngine == "sqlite"); err != nil {
+		return err
+	}
+	cancel()
 
 	level, err := log.ParseLevel(option.LogLevel)
 	if err != nil {
@@ -266,9 +186,11 @@ func main() {
 
 	commitmgr.Init(centralDir, dataDir)
 
-	share.Init(ccnetDB, seafileDB, option.GroupTableName, option.CloudMode)
-
-	rpcClientInit()
+	groupTable := option.GroupTableName
+	if dbOptions.DBEngine == "sqlite" {
+		groupTable = "Group"
+	}
+	share.Init(ccnetDB, seafileDB, groupTable, option.CloudMode)
 
 	fileopInit()
 
@@ -281,40 +203,66 @@ func main() {
 	initUpload()
 
 	metrics.Init()
+	defer metrics.Stop()
 
-	router := newHTTPRouter()
+	server := &http.Server{
+		Addr:    fmt.Sprintf("%s:%d", option.Host, option.Port),
+		Handler: newHTTPRouter(),
+	}
+	var listenConfig net.ListenConfig
+	listener, err := listenConfig.Listen(ctx, "tcp", server.Addr)
+	if err != nil {
+		return fmt.Errorf("listen for fileserver HTTP: %w", err)
+	}
+	defer listener.Close()
 
-	go handleSignals()
-	go handleUser1Signal()
+	if pidFilePath != "" {
+		if err := os.WriteFile(pidFilePath, []byte(fmt.Sprint(os.Getpid())), 0664); err != nil {
+			return fmt.Errorf("write fileserver PID: %w", err)
+		}
+		defer func() {
+			if err := os.Remove(pidFilePath); err != nil && !errors.Is(err, os.ErrNotExist) {
+				log.Warnf("Remove fileserver PID: %v", err)
+			}
+		}()
+	}
 
+	go handleUser1Signal(ctx)
 	log.Print("Seafile file server started.")
 
-	server := new(http.Server)
-	server.Addr = fmt.Sprintf("%s:%d", option.Host, option.Port)
-	server.Handler = router
-
-	err = server.ListenAndServe()
-	if err != nil {
-		log.Errorf("File server exiting: %v", err)
+	result := make(chan error, 1)
+	go func() { result <- server.Serve(listener) }()
+	select {
+	case err := <-result:
+		return err
+	case <-ctx.Done():
+		shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := server.Shutdown(shutdown); err != nil {
+			server.Close()
+			<-result
+			return fmt.Errorf("shut down fileserver HTTP: %w", err)
+		}
+		err := <-result
+		if !errors.Is(err, http.ErrServerClosed) {
+			return err
+		}
+		return nil
 	}
 }
 
-func handleSignals() {
-	signalChan := make(chan os.Signal, 1)
-	signal.Notify(signalChan, syscall.SIGINT, syscall.SIGTERM, os.Interrupt)
-	<-signalChan
-	metrics.Stop()
-	removePidfile(pidFilePath)
-	os.Exit(0)
-}
-
-func handleUser1Signal() {
+func handleUser1Signal(ctx context.Context) {
 	signalChan := make(chan os.Signal, 1)
 	signal.Notify(signalChan, syscall.SIGUSR1)
+	defer signal.Stop(signalChan)
 
 	for {
-		<-signalChan
-		logRotate()
+		select {
+		case <-ctx.Done():
+			return
+		case <-signalChan:
+			logRotate()
+		}
 	}
 }
 
@@ -338,14 +286,23 @@ func logRotate() {
 
 var rpcclient *searpc.Client
 
-func rpcClientInit() {
+func rpcClientInit(ctx context.Context, check bool) error {
 	var pipePath string
 	if rpcPipePath != "" {
 		pipePath = filepath.Join(rpcPipePath, "seafile.sock")
 	} else {
 		pipePath = filepath.Join(absDataDir, "seafile.sock")
 	}
-	rpcclient = searpc.Init(pipePath, "seafserv-threaded-rpcserver", 10)
+	rpcclient = searpc.Init(pipePath, seafserver.RPCService, 10)
+	if check {
+		// Look up a repository without creating data. Both cores return a
+		// successful null value when this repository does not exist.
+		const probe = "00000000-0000-0000-0000-000000000000"
+		if _, err := rpcclient.CallContext(ctx, "seafile_get_repo", probe); err != nil {
+			return fmt.Errorf("contact Searpc at %q: %w", pipePath, err)
+		}
+	}
+	return nil
 }
 
 func newHTTPRouter() *mux.Router {

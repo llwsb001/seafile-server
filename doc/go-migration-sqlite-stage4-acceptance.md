@@ -10,7 +10,7 @@
 | Go 核心及消费者 | `3a5adc3961da7f13cb077e141c60d576c58d42cf`，试验分支 `codex/sqlite-stage4-integration`。 [服务端集成提交](https://github.com/llwsb001/seafile-server/commit/3a5adc3961da7f13cb077e141c60d576c58d42cf) |
 | 兼容样本与回放工具 | `3c19a0700642a7d05ae7e41c466cb55662f2a37a`，试验分支 `codex/sqlite-stage4-fixture-integration`。 [兼容集成提交](https://github.com/llwsb001/seafile-compat-tests/commit/3c19a0700642a7d05ae7e41c466cb55662f2a37a) · [v5 场景规范](https://github.com/llwsb001/seafile-compat-tests/blob/3c19a0700642a7d05ae7e41c466cb55662f2a37a/fixtures/v5/README.md) |
 
-两条集成分支固定了可复现的 PR 组合。回放验证归档和数据库摘要，为每个角色复制独立运行目录和 Unix socket。C 使用 `[database] type = sqlite` 及样本的标准或云模式配置，Go 使用同一份配置。v5 根据场景打开普通分享写入或管理 RPC，并记录同一次调用的原始响应、Python 解码和指定的 SQLite 表状态。随机令牌使用别名，生成时间按秒或微秒校验后用占位符记录。回放使用合成凭据，冻结响应仅保留脱敏后的敏感字段。 [回放入口](https://github.com/llwsb001/seafile-compat-tests/blob/3c19a0700642a7d05ae7e41c466cb55662f2a37a/tests/compare_stage4.py)
+两条集成分支固定了可复现的 PR 组合。回放验证归档和数据库摘要，为每个角色复制独立运行目录和 Unix socket。C 使用 `[database] type = sqlite` 及样本的标准或云模式配置，Go 使用同一份配置。v5 根据场景打开普通分享写入或管理 RPC，并记录同一次调用的原始响应、Python 解码和指定的 SQLite 表状态。随机令牌使用别名，生成时间按秒或微秒校验后用占位符记录。回放使用合成凭据，敏感字段在冻结响应中以字段形状、长度、摘要或别名记录。 [回放入口](https://github.com/llwsb001/seafile-compat-tests/blob/3c19a0700642a7d05ae7e41c466cb55662f2a37a/tests/compare_stage4.py)
 
 ## 回归结果
 
@@ -52,7 +52,7 @@
 | Go fileserver Web 令牌消费 | 使用真实 Unix Searpc 调用现有令牌解析入口，读取库 ID、对象 ID、操作和使用者，失效令牌触发 `403`。 [消费测试](https://github.com/llwsb001/seafile-server/blob/3a5adc3961da7f13cb077e141c60d576c58d42cf/fileserver/web_access_token_rpc_test.go) |
 | Go fileserver 上传配额 | 管理 RPC 经 Unix Searpc 写入隔离 SQLite 后，实际 `checkQuotaByContentLength` 读取数据库并使用新限制，覆盖允许、到达限额和数据库值变化。 [配额消费测试](https://github.com/llwsb001/seafile-server/blob/3a5adc3961da7f13cb077e141c60d576c58d42cf/fileserver/quota_rpc_test.go) |
 | Go fileserver 解密 | `parseCryptKey` 经 Unix Searpc 获取 v1 加密库的密钥和 IV，并按明文 SHA-256 验证密文块。v5 另用 OpenSSL 校验四种格式的合成样本。 [解密消费测试](https://github.com/llwsb001/seafile-server/blob/3a5adc3961da7f13cb077e141c60d576c58d42cf/fileserver/repo_password_rpc_test.go) · [加密样本](https://github.com/llwsb001/seafile-compat-tests/pull/15) |
-| Go fileserver 同步令牌 | 独立 Go 测试进程用 SQLite 注入现有 HTTP handler，先让旧令牌命中缓存。核心通过 Unix Searpc 撤销后，下一次请求立即被拒绝。带设备和无设备令牌均覆盖，删除设备行失败时事务回滚，解除故障后可重试。 [同步消费者测试](https://github.com/llwsb001/seafile-server/blob/3a5adc3961da7f13cb077e141c60d576c58d42cf/fileserver/sync_token_revocation_test.go) |
+| Go fileserver 同步令牌 | 独立 Go 测试进程用 SQLite 注入现有 HTTP handler，先让现有请求入口预热旧令牌缓存。SQLite 路径在每次请求中检查数据库的权威记录。核心通过 Unix Searpc 撤销后，下一次请求立即被拒绝。带设备和无设备令牌均覆盖，删除设备行失败时事务回滚，解除故障后可重试。 [同步消费者测试](https://github.com/llwsb001/seafile-server/blob/3a5adc3961da7f13cb077e141c60d576c58d42cf/fileserver/sync_token_revocation_test.go) |
 | 进程内发布与外部通知 | 实际 fileserver 事件发布函数经 Unix Searpc 写入 Go 核心。外部通知单独验证 Go 核心发送入口、合成库和提交 ID、真实 `notification-server` 接收路由、JWT 签名和到期、HTTP 失败及取消。 [发布消费测试](https://github.com/llwsb001/seafile-server/blob/3a5adc3961da7f13cb077e141c60d576c58d42cf/fileserver/event_rpc_test.go) · [通知实现和联调记录 PR #26](https://github.com/llwsb001/seafile-server/pull/26) |
 | SQLite 多表失败恢复 | 普通分享在写入或提交遇锁时回滚。账号改名最后一张表更新失败时，账号及库、群组和令牌引用均回滚。群组建删故障保留事务前状态，解除故障后重试成功。组织关系在跨库注入故障后也能回滚。 [分享写入](https://github.com/llwsb001/seafile-compat-tests/pull/6) · [账号](https://github.com/llwsb001/seafile-server/pull/25) · [群组](https://github.com/llwsb001/seafile-server/pull/24) · [组织](https://github.com/llwsb001/seafile-server/pull/28) |
 
@@ -74,7 +74,7 @@ go -C "$SEAFILE_SERVER_DIR/fileserver" build -o "$SEAFILE_TARGET_BIN" ./cmd/seaf
 make -C "$SEAFILE_COMPAT_TESTS" verify-fixtures FIXTURES_DIR=fixtures/v1
 ```
 
-v1 和 v2 的 RPC 入口接收已经运行的 C、Go socket。v1 启动两份归档副本。v2 每组用 `tests/compare_permissions.py fixtures/v2 <场景组> prepare <新目录>` 为两边准备各自的快照及配置。每组分别启动 C 和 Go，按 `-F`、`-d`、`-c`、`-p` 提供配置、数据、ccnet 和 socket 目录。令 `C_RPC_SOCKET` 和 `GO_RPC_SOCKET` 指向当前组的 socket。v2 依次运行 `identity`、`permissions`、`cloud`、`revoked`。 [v2 准备及运行说明](go-migration-authorization.md#v2-场景与验收)
+v1 和 v2 的 RPC 入口接收已经运行的 C、Go socket。v1 启动两份归档副本。v2 每组用 `tests/compare_permissions.py fixtures/v2 <场景组> prepare <新目录>` 为两边准备各自的快照及配置。每组分别启动 C 和 Go。C 的启动环境需设置 `JWT_PRIVATE_KEY=fixture-only-key`。按 `-F`、`-d`、`-c`、`-p` 提供配置、数据、ccnet 和 socket 目录。令 `C_RPC_SOCKET` 和 `GO_RPC_SOCKET` 指向当前组的 socket。v2 依次运行 `identity`、`permissions`、`cloud`、`revoked`。 [v2 准备及运行说明](go-migration-authorization.md#v2-场景与验收)
 
 ```sh
 make -C "$SEAFILE_COMPAT_TESTS" test-api FIXTURES_DIR=fixtures/v1 \

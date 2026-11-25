@@ -108,6 +108,7 @@ func run(ctx context.Context, args []string) error {
 		maps.Copy(handlers, serverConfig.RPCHandlers(writer))
 		maps.Copy(handlers, reader.SyncTokenRPCHandlers(writer))
 		maps.Copy(handlers, reader.RepoCreationRPCHandlers(writer))
+		maps.Copy(handlers, reader.DirectoryShareRPCHandlers(writer))
 	}
 	tokenMode, tokenTTL, err := webTokenSettings(confData, os.Getenv("ENABLE_GO_FILESERVER"))
 	if err != nil {

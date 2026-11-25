@@ -31,11 +31,19 @@ type webAccessToken struct {
 
 // WebAccessTokens manages the transient credentials for the Go fileserver.
 type WebAccessTokens struct {
-	ttl int64
-	now func() time.Time
+	ttl  int64
+	now  func() time.Time
+	zips *ZipDownloads
 
 	mu     sync.Mutex
 	tokens map[string]webAccessToken
+}
+
+// WebAccessTokens attaches ZIP preparation to tokens issued by this core.
+func (m *ZipDownloads) WebAccessTokens(lifetime int64) *WebAccessTokens {
+	tokens := NewWebAccessTokens(lifetime)
+	tokens.zips = m
+	return tokens
 }
 
 // NewWebAccessTokens creates an empty store with a lifetime in seconds.
@@ -100,7 +108,7 @@ func validWebAccessOperation(op string) bool {
 	return false
 }
 
-func (s *WebAccessTokens) getToken(_ context.Context, args []json.RawMessage) (any, *searpc.RPCError) {
+func (s *WebAccessTokens) getToken(ctx context.Context, args []json.RawMessage) (any, *searpc.RPCError) {
 	repoID, objectID := stringArgument(args, 0), stringArgument(args, 1)
 	op, username := stringArgument(args, 2), stringArgument(args, 3)
 	if repoID == nil || objectID == nil || op == nil || username == nil {
@@ -114,6 +122,14 @@ func (s *WebAccessTokens) getToken(_ context.Context, args []json.RawMessage) (a
 	if err != nil {
 		log.Printf("generate web access token: %v", err)
 		return nil, rpcError(errWebAccessToken, "Internal error")
+	}
+	if s.zips != nil && zipOperation(access.Op) {
+		if rpcErr := s.zips.prepare(ctx, token, access); rpcErr != nil {
+			s.mu.Lock()
+			delete(s.tokens, token)
+			s.mu.Unlock()
+			return nil, rpcErr
+		}
 	}
 	return token, nil
 }

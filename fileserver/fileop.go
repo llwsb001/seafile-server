@@ -177,13 +177,13 @@ func accessCB(rsp http.ResponseWriter, r *http.Request) *appError {
 		return &appError{nil, msg, http.StatusForbidden}
 	}
 
+	rsp.Header().Set("ETag", objID)
 	if _, ok := r.Header["If-Modified-Since"]; ok {
-		return &appError{nil, "", http.StatusNotModified}
+		rsp.WriteHeader(http.StatusNotModified)
+		return nil
 	}
 
-	now := time.Now()
-	rsp.Header().Set("ETag", objID)
-	rsp.Header().Set("Last-Modified", now.Format("Mon, 2 Jan 2006 15:04:05 GMT"))
+	rsp.Header().Set("Last-Modified", time.Now().UTC().Format(http.TimeFormat))
 	rsp.Header().Set("Cache-Control", "max-age=3600")
 
 	ranges := r.Header["Range"]
@@ -223,7 +223,7 @@ func accessCB(rsp http.ResponseWriter, r *http.Request) *appError {
 
 func parseCryptKey(rsp http.ResponseWriter, repoID string, user string, version int) (*seafileCrypt, *appError) {
 	key, err := rpcclient.Call("seafile_get_decrypt_key", repoID, user)
-	if err != nil {
+	if err != nil || key == nil {
 		errMessage := "Repo is encrypted. Please provide password to view it."
 		return nil, &appError{nil, errMessage, http.StatusBadRequest}
 	}
@@ -275,7 +275,11 @@ func accessV2CB(rsp http.ResponseWriter, r *http.Request) *appError {
 	rpath := getCanonPath(filePath)
 	fileName := filepath.Base(rpath)
 
-	op := r.URL.Query().Get("op")
+	query := r.URL.Query()
+	if !query.Has("op") {
+		return &appError{nil, "No operation\n", http.StatusBadRequest}
+	}
+	op := query.Get("op")
 	if op != "view" && op != "download" {
 		msg := "Operation is neither view or download\n"
 		return &appError{nil, msg, http.StatusBadRequest}
@@ -302,15 +306,16 @@ func accessV2CB(rsp http.ResponseWriter, r *http.Request) *appError {
 		return &appError{nil, msg, http.StatusBadRequest}
 	}
 
-	fileID, _, err := fsmgr.GetObjIDByPath(repo.StoreID, repo.RootID, rpath)
-	if err != nil {
+	fileID, mode, err := fsmgr.GetObjIDByPath(repo.StoreID, repo.RootID, rpath)
+	if err != nil || !fsmgr.IsRegular(mode) {
 		msg := "Invalid file_path\n"
 		return &appError{nil, msg, http.StatusBadRequest}
 	}
 
 	etag := r.Header.Get("If-None-Match")
 	if etag == fileID {
-		return &appError{nil, "", http.StatusNotModified}
+		rsp.WriteHeader(http.StatusNotModified)
+		return nil
 	}
 
 	rsp.Header().Set("ETag", fileID)
@@ -499,7 +504,8 @@ func doFileRange(rsp http.ResponseWriter, r *http.Request, repo *repomgr.Repo, f
 	if !ok {
 		conRange := fmt.Sprintf("bytes */%d", file.FileSize)
 		rsp.Header().Set("Content-Range", conRange)
-		return &appError{nil, "", http.StatusRequestedRangeNotSatisfiable}
+		rsp.WriteHeader(http.StatusRequestedRangeNotSatisfiable)
+		return nil
 	}
 
 	rsp.Header().Set("Accept-Ranges", "bytes")
@@ -519,6 +525,9 @@ func doFileRange(rsp http.ResponseWriter, r *http.Request, repo *repomgr.Repo, f
 	rsp.Header().Set("Content-Range", conRange)
 
 	rsp.WriteHeader(http.StatusPartialContent)
+	if r.Method == http.MethodHead {
+		return nil
+	}
 
 	var blkSize []uint64
 	if file.FileSize > cacheBlockMapThreshold {
@@ -640,53 +649,34 @@ func doFileRange(rsp http.ResponseWriter, r *http.Request, repo *repomgr.Repo, f
 }
 
 func parseRange(byteRanges string, fileSize uint64) (uint64, uint64, bool) {
-	start := strings.Index(byteRanges, "=")
-	end := strings.Index(byteRanges, "-")
-
-	if end < 0 {
+	_, limits, ok := strings.Cut(byteRanges, "=")
+	if !ok || fileSize == 0 {
 		return 0, 0, false
 	}
-
-	var startByte, endByte uint64
-
-	if start+1 == end {
-		retByte, err := strconv.ParseUint(byteRanges[end+1:], 10, 64)
-		if err != nil || retByte == 0 {
-			return 0, 0, false
-		}
-		startByte = fileSize - retByte
-		endByte = fileSize - 1
-	} else if end+1 == len(byteRanges) {
-		firstByte, err := strconv.ParseUint(byteRanges[start+1:end], 10, 64)
-		if err != nil {
-			return 0, 0, false
-		}
-
-		startByte = firstByte
-		endByte = fileSize - 1
-	} else {
-		firstByte, err := strconv.ParseUint(byteRanges[start+1:end], 10, 64)
-		if err != nil {
-			return 0, 0, false
-		}
-		lastByte, err := strconv.ParseUint(byteRanges[end+1:], 10, 64)
-		if err != nil {
-			return 0, 0, false
-		}
-
-		if lastByte > fileSize-1 {
-			lastByte = fileSize - 1
-		}
-
-		startByte = firstByte
-		endByte = lastByte
-	}
-
-	if startByte > endByte {
+	first, last, ok := strings.Cut(limits, "-")
+	if !ok {
 		return 0, 0, false
 	}
-
-	return startByte, endByte, true
+	if first == "" {
+		suffix, err := strconv.ParseUint(last, 10, 64)
+		if err != nil || suffix == 0 || suffix > fileSize {
+			return 0, 0, false
+		}
+		return fileSize - suffix, fileSize - 1, true
+	}
+	start, err := strconv.ParseUint(first, 10, 64)
+	if err != nil || start >= fileSize {
+		return 0, 0, false
+	}
+	end := fileSize - 1
+	if last != "" {
+		lastByte, err := strconv.ParseUint(last, 10, 64)
+		if err != nil || lastByte < start {
+			return 0, 0, false
+		}
+		end = min(lastByte, end)
+	}
+	return start, end, true
 }
 
 func setCommonHeaders(rsp http.ResponseWriter, r *http.Request, operation, fileName string) {
@@ -703,15 +693,14 @@ func setCommonHeaders(rsp http.ResponseWriter, r *http.Request, operation, fileN
 		rsp.Header().Set("Content-Type", "application/octet-stream")
 	}
 
-	var contFileName string
+	disposition := "inline"
 	if operation == "download" || operation == "download-link" ||
 		operation == "downloadblks" {
-		// Since the file name downloaded by safari will be garbled, we need to encode the filename.
-		// Safari cannot parse unencoded utf8 characters.
-		contFileName = fmt.Sprintf("attachment;filename*=utf-8''%s;filename=\"%s\"", url.PathEscape(fileName), sanitizeHeaderFilename(fileName))
-	} else {
-		contFileName = fmt.Sprintf("inline;filename*=utf-8''%s;filename=\"%s\"", url.PathEscape(fileName), sanitizeHeaderFilename(fileName))
+		disposition = "attachment"
 	}
+	// Encode the extended parameter as percent-escaped UTF-8, with an ASCII fallback.
+	encodedName := strings.ReplaceAll(url.QueryEscape(fileName), "+", "%20")
+	contFileName := fmt.Sprintf("%s;filename*=utf-8''%s;filename=\"%s\"", disposition, encodedName, sanitizeHeaderFilename(fileName))
 	rsp.Header().Set("Content-Disposition", contFileName)
 
 	if fileType != "image/jpg" {
@@ -781,11 +770,11 @@ func accessBlksCB(rsp http.ResponseWriter, r *http.Request) *appError {
 	id := accessInfo.objID
 
 	if _, ok := r.Header["If-Modified-Since"]; ok {
-		return &appError{nil, "", http.StatusNotModified}
+		rsp.WriteHeader(http.StatusNotModified)
+		return nil
 	}
 
-	now := time.Now()
-	rsp.Header().Set("Last-Modified", now.Format("Mon, 2 Jan 2006 15:04:05 GMT"))
+	rsp.Header().Set("Last-Modified", time.Now().UTC().Format(http.TimeFormat))
 	rsp.Header().Set("Cache-Control", "max-age=3600")
 
 	repo := repomgr.Get(repoID)

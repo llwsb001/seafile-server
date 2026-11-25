@@ -4,7 +4,7 @@
 
 ## 起点
 
-- 首批四个 SQLite 只读 RPC、库所有者／状态／历史保留 RPC 及其对拍均已合入。后续实现以两个仓库的默认分支为基线。 [只读 RPC](https://github.com/llwsb001/seafile-server/pull/6) · [库属性 RPC](https://github.com/llwsb001/seafile-server/pull/7) · [库属性对拍](https://github.com/llwsb001/seafile-compat-tests/pull/4)
+- 首批四个 SQLite 只读 RPC、库所有者／状态／历史保留 RPC 及其对拍均已合入各自仓库的默认分支。 [只读 RPC](https://github.com/llwsb001/seafile-server/pull/6) · [库属性 RPC](https://github.com/llwsb001/seafile-server/pull/7) · [库属性对拍](https://github.com/llwsb001/seafile-compat-tests/pull/4)
 - v1 有 3 条 `EmailUser` 记录和 1 条 `SharedRepo` 记录。`Group`、`GroupUser`、`Organization`、`RepoGroup` 和 `InnerPubRepo` 为空。本批在兼容仓库新增 v2，v1 继续跑存储和原有只读 RPC 回归。 [样本规则](https://github.com/llwsb001/seafile-compat-tests/blob/main/fixtures/SPEC.md)
 
 ## PR 顺序

@@ -41,7 +41,7 @@ func OpenSQLiteReadOnly(ctx context.Context, dbPath string) (*sql.DB, error) {
 	if err != nil {
 		return nil, err
 	}
-	uri.RawQuery = "mode=ro"
+	uri.RawQuery = "mode=ro&" + sqliteBusyTimeout
 	db, err := sql.Open("sqlite", uri.String())
 	if err != nil {
 		return nil, err

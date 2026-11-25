@@ -180,6 +180,9 @@ func TestSQLiteWriteFileObjects(t *testing.T) {
 			if err := commitmgr.Save(commit); err != nil {
 				t.Fatal(err)
 			}
+			if err := commitmgr.Save(commit); err != nil {
+				t.Fatalf("retry durable commit save: %v", err)
+			}
 			loaded, err := commitmgr.Load(repo.ID, commit.CommitID)
 			if err != nil {
 				t.Fatal(err)

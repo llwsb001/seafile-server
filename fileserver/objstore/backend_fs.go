@@ -98,14 +98,40 @@ func (b *fsBackend) write(repoID string, objID string, r io.Reader, sync bool) e
 	}
 
 	success = true
-	if sync && runtime.GOOS == "linux" {
-		dir, err := os.Open(parentDir)
+	if sync {
+		return b.syncObjectDirs(parentDir)
+	}
+	return nil
+}
+
+func (b *fsBackend) syncObject(repoID, objID string) error {
+	parentDir := path.Join(b.objDir, repoID, objID[:2])
+	object, err := os.Open(path.Join(parentDir, objID[2:]))
+	if err != nil {
+		return err
+	}
+	defer object.Close()
+	if err := object.Sync(); err != nil {
+		return err
+	}
+	return b.syncObjectDirs(parentDir)
+}
+
+func (b *fsBackend) syncObjectDirs(parentDir string) error {
+	if runtime.GOOS != "linux" {
+		return nil
+	}
+	// A new repository or shard can add directory entries at several levels.
+	storageDir := path.Dir(b.objDir)
+	for _, dirPath := range []string{parentDir, path.Dir(parentDir), b.objDir, storageDir, path.Dir(storageDir)} {
+		dir, err := os.Open(dirPath)
 		if err != nil {
 			return err
 		}
-		defer dir.Close()
+		err = dir.Sync()
+		dir.Close()
 		// Match the C store on filesystems that do not support directory sync.
-		if err := dir.Sync(); err != nil && !errors.Is(err, syscall.EINVAL) {
+		if err != nil && !errors.Is(err, syscall.EINVAL) {
 			return err
 		}
 	}

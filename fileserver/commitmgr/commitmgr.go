@@ -195,6 +195,10 @@ func saveIfMissing(objects *objstore.ObjectStore, repoID, commitID string, data 
 		return err
 	}
 	if exists {
+		if durable {
+			// The previous write may have renamed the object before its directory sync failed.
+			return objects.Sync(repoID, commitID)
+		}
 		return nil
 	}
 	return objects.Write(repoID, commitID, data, durable)

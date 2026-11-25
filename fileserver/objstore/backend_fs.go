@@ -78,6 +78,12 @@ func (b *fsBackend) write(repoID string, objID string, r io.Reader, sync bool) e
 		return err
 	}
 
+	if sync {
+		if err := tFile.Sync(); err != nil {
+			tFile.Close()
+			return err
+		}
+	}
 	err = tFile.Close()
 	if err != nil {
 		return err

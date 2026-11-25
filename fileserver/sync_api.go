@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"database/sql"
@@ -12,6 +13,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -131,11 +133,7 @@ func getFsId(args ...interface{}) error {
 		return nil
 	}
 
-	dirOnlyArg := queries.Get("dir-only")
-	var dirOnly bool
-	if dirOnlyArg != "" {
-		dirOnly = true
-	}
+	dirOnly := queries.Get("dir-only") != ""
 
 	vars := mux.Vars(r)
 	repoID := vars["repoid"]
@@ -353,9 +351,10 @@ func getAccessibleRepoListCB(rsp http.ResponseWriter, r *http.Request) *appError
 		if repo.RepoType != "" {
 			continue
 		}
-		if _, ok := obtainedRepos[repo.ID]; !ok {
-			obtainedRepos[repo.ID] = repo.ID
+		if _, seen := obtainedRepos[repo.ID]; option.DBType == "sqlite" && seen {
+			continue
 		}
+		obtainedRepos[repo.ID] = repo.ID
 		repo.Permission = "rw"
 		repo.Type = "repo"
 		repo.Owner = user
@@ -377,6 +376,9 @@ func getAccessibleRepoListCB(rsp http.ResponseWriter, r *http.Request) *appError
 		sRepo.Type = "srepo"
 		sRepo.Owner = strings.ToLower(sRepo.Owner)
 		repoObjects = append(repoObjects, sRepo)
+		if option.DBType == "sqlite" {
+			obtainedRepos[sRepo.ID] = sRepo.ID
+		}
 	}
 
 	repos, err = share.GetGroupReposByUser(user, -1)
@@ -394,6 +396,9 @@ func getAccessibleRepoListCB(rsp http.ResponseWriter, r *http.Request) *appError
 		gRepo.Type = "grepo"
 		gRepo.Owner = strings.ToLower(gRepo.Owner)
 		repoObjects = append(repoObjects, gRepo)
+		if option.DBType == "sqlite" {
+			obtainedRepos[gRepo.ID] = gRepo.ID
+		}
 	}
 
 	repos, err = share.ListInnerPubRepos()
@@ -413,6 +418,9 @@ func getAccessibleRepoListCB(rsp http.ResponseWriter, r *http.Request) *appError
 		sRepo.Type = "grepo"
 		sRepo.Owner = "Organization"
 		repoObjects = append(repoObjects, sRepo)
+		if option.DBType == "sqlite" {
+			obtainedRepos[sRepo.ID] = sRepo.ID
+		}
 	}
 
 	var data []byte
@@ -451,6 +459,7 @@ func filterGroupRepos(repos []*share.SharedRepo) map[string]*share.SharedRepo {
 }
 
 func recvFSCB(rsp http.ResponseWriter, r *http.Request) *appError {
+	const headerSize = 44
 	vars := mux.Vars(r)
 	repoID := vars["repoid"]
 
@@ -473,37 +482,38 @@ func recvFSCB(rsp http.ResponseWriter, r *http.Request) *appError {
 	if err != nil {
 		return &appError{nil, err.Error(), http.StatusBadRequest}
 	}
+	usesSQLite := repomgr.UsesSQLite()
+	if usesSQLite && len(fsBuf) < headerSize {
+		return &appError{nil, "Request body size invalid", http.StatusBadRequest}
+	}
 
-	for len(fsBuf) > 44 {
+	for len(fsBuf) >= headerSize {
+		if len(fsBuf) == headerSize && !usesSQLite {
+			break
+		}
 		objID := string(fsBuf[:40])
 		if !utils.IsObjectIDValid(objID) {
 			msg := fmt.Sprintf("Fs obj id %s is invalid", objID)
 			return &appError{nil, msg, http.StatusBadRequest}
 		}
 
-		var objSize uint32
-		sizeBuffer := bytes.NewBuffer(fsBuf[40:44])
-		if err := binary.Read(sizeBuffer, binary.BigEndian, &objSize); err != nil {
-			msg := fmt.Sprintf("Failed to read fs obj size: %v", err)
-			return &appError{nil, msg, http.StatusBadRequest}
-		}
-
-		if len(fsBuf) < int(44+objSize) {
+		objSize := binary.BigEndian.Uint32(fsBuf[40:headerSize])
+		if uint64(objSize) > uint64(len(fsBuf)-headerSize) {
 			msg := "Request body size invalid"
 			return &appError{nil, msg, http.StatusBadRequest}
 		}
-
-		if exists, _ := fsmgr.Exists(storeID, objID); exists {
-			fsBuf = fsBuf[44+objSize:]
-			continue
+		if usesSQLite && objSize == 0 {
+			return &appError{nil, "", http.StatusInternalServerError}
 		}
 
-		objBuffer := bytes.NewBuffer(fsBuf[44 : 44+objSize])
-		if err := fsmgr.WriteRaw(storeID, objID, objBuffer); err != nil {
-			err := fmt.Errorf("Failed to write fs obj %s:%s : %v", storeID, objID, err)
-			return &appError{err, "", http.StatusInternalServerError}
+		end := headerSize + int(objSize)
+		if exists, _ := fsmgr.Exists(storeID, objID); !exists {
+			if err := fsmgr.WriteRaw(storeID, objID, bytes.NewReader(fsBuf[headerSize:end])); err != nil {
+				err := fmt.Errorf("Failed to write fs obj %s:%s : %v", storeID, objID, err)
+				return &appError{err, "", http.StatusInternalServerError}
+			}
 		}
-		fsBuf = fsBuf[44+objSize:]
+		fsBuf = fsBuf[end:]
 	}
 	if len(fsBuf) == 0 {
 		rsp.WriteHeader(http.StatusOK)
@@ -540,8 +550,8 @@ func postCheckExistCB(rsp http.ResponseWriter, r *http.Request, existType checkE
 		return &appError{err, "", http.StatusInternalServerError}
 	}
 
-	var objIDList []string
-	if err := json.NewDecoder(r.Body).Decode(&objIDList); err != nil {
+	objIDList, err := decodeSyncObjectIDs(r.Body)
+	if err != nil {
 		return &appError{nil, err.Error(), http.StatusBadRequest}
 	}
 
@@ -583,6 +593,42 @@ func postCheckExistCB(rsp http.ResponseWriter, r *http.Request, existType checkE
 	return nil
 }
 
+func decodeSyncObjectIDs(body io.Reader) ([]string, error) {
+	if option.DBType != "sqlite" {
+		var ids []string
+		err := json.NewDecoder(body).Decode(&ids)
+		return ids, err
+	}
+
+	// C accepts a JSON object as an empty list and leaves invalid entries for
+	// the caller to skip (check-fs/check-blocks) or reject (pack-fs).
+	data, err := io.ReadAll(body)
+	if err != nil {
+		return nil, err
+	}
+	data = bytes.TrimSpace(data)
+	if len(data) == 0 {
+		return nil, io.ErrUnexpectedEOF
+	}
+	switch data[0] {
+	case '{':
+		var object map[string]json.RawMessage
+		return nil, json.Unmarshal(data, &object)
+	case '[':
+		var objects []json.RawMessage
+		if err := json.Unmarshal(data, &objects); err != nil {
+			return nil, err
+		}
+		ids := make([]string, len(objects))
+		for i, object := range objects {
+			_ = json.Unmarshal(object, &ids[i])
+		}
+		return ids, nil
+	default:
+		return nil, errors.New("expected a JSON object or array of object IDs")
+	}
+}
+
 func packFSCB(rsp http.ResponseWriter, r *http.Request) *appError {
 	vars := mux.Vars(r)
 	repoID := vars["repoid"]
@@ -602,8 +648,8 @@ func packFSCB(rsp http.ResponseWriter, r *http.Request) *appError {
 		return &appError{err, "", http.StatusInternalServerError}
 	}
 
-	var fsIDList []string
-	if err := json.NewDecoder(r.Body).Decode(&fsIDList); err != nil {
+	fsIDList, err := decodeSyncObjectIDs(r.Body)
+	if err != nil {
 		return &appError{nil, err.Error(), http.StatusBadRequest}
 	}
 
@@ -611,15 +657,24 @@ func packFSCB(rsp http.ResponseWriter, r *http.Request) *appError {
 	var data bytes.Buffer
 	for i := 0; i < len(fsIDList); i++ {
 		if !utils.IsObjectIDValid(fsIDList[i]) {
+			if option.DBType == "sqlite" && data.Len() > 0 {
+				writeObjectPack(rsp, &data, http.StatusBadRequest)
+				return nil
+			}
 			msg := fmt.Sprintf("Invalid fs id %s", fsIDList[i])
 			return &appError{nil, msg, http.StatusBadRequest}
 		}
-		data.WriteString(fsIDList[i])
 		var tmp bytes.Buffer
 		if err := fsmgr.ReadRaw(storeID, fsIDList[i], &tmp); err != nil {
 			err := fmt.Errorf("Failed to read fs %s:%s: %v", storeID, fsIDList[i], err)
+			if option.DBType == "sqlite" && data.Len() > 0 {
+				log.Error(err)
+				writeObjectPack(rsp, &data, http.StatusInternalServerError)
+				return nil
+			}
 			return &appError{err, "", http.StatusInternalServerError}
 		}
+		data.WriteString(fsIDList[i])
 		tmpLen := make([]byte, 4)
 		binary.BigEndian.PutUint32(tmpLen, uint32(tmp.Len()))
 		data.Write(tmpLen)
@@ -631,16 +686,20 @@ func packFSCB(rsp http.ResponseWriter, r *http.Request) *appError {
 		}
 	}
 
-	rsp.Header().Set("Content-Type", "application/octet-stream")
-	rsp.Header().Set("Content-Length", strconv.Itoa(data.Len()))
-	rsp.WriteHeader(http.StatusOK)
-	rsp.Write(data.Bytes())
+	writeObjectPack(rsp, &data, http.StatusOK)
 	return nil
 }
 
+func writeObjectPack(rsp http.ResponseWriter, data *bytes.Buffer, status int) {
+	rsp.Header().Set("Content-Type", "application/octet-stream")
+	rsp.Header().Set("Content-Length", strconv.Itoa(data.Len()))
+	rsp.WriteHeader(status)
+	rsp.Write(data.Bytes())
+}
+
 func headCommitsMultiCB(rsp http.ResponseWriter, r *http.Request) *appError {
-	var repoIDList []string
-	if err := json.NewDecoder(r.Body).Decode(&repoIDList); err != nil {
+	repoIDList, err := decodeSyncObjectIDs(r.Body)
+	if err != nil {
 		return &appError{err, "", http.StatusBadRequest}
 	}
 	if len(repoIDList) == 0 {
@@ -661,12 +720,12 @@ func headCommitsMultiCB(rsp http.ResponseWriter, r *http.Request) *appError {
 		args[i] = repoIDList[i]
 	}
 
-	sqlStr := fmt.Sprintf(
-		"SELECT repo_id, commit_id FROM Branch WHERE name='master' AND "+
-			"repo_id IN (%s) LOCK IN SHARE MODE",
-		placeholders.String())
+	sqlStr := "SELECT repo_id, commit_id FROM Branch WHERE name='master' AND repo_id IN (" + placeholders.String() + ")"
+	if option.DBType != "sqlite" {
+		sqlStr += " LOCK IN SHARE MODE"
+	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), option.DBOpTimeout)
+	ctx, cancel := context.WithTimeout(r.Context(), option.DBOpTimeout)
 	defer cancel()
 	rows, err := seafileDB.QueryContext(ctx, sqlStr, args...)
 	if err != nil {
@@ -754,13 +813,16 @@ func getJWTTokenCB(rsp http.ResponseWriter, r *http.Request) *appError {
 	vars := mux.Vars(r)
 	repoID := vars["repoid"]
 
-	if !option.EnableNotification {
+	if !option.EnableNotification && option.DBType != "sqlite" {
 		return &appError{nil, "", http.StatusNotFound}
 	}
 
 	user, appErr := validateToken(r, repoID, false)
 	if appErr != nil {
 		return appErr
+	}
+	if !option.EnableNotification {
+		return &appError{nil, "", http.StatusNotFound}
 	}
 
 	exp := time.Now().Add(time.Hour * 72).Unix()
@@ -832,16 +894,29 @@ func putSendBlockCB(rsp http.ResponseWriter, r *http.Request) *appError {
 		return &appError{err, "", http.StatusInternalServerError}
 	}
 
+	var body io.Reader = r.Body
+	usesSQLite := repomgr.UsesSQLite()
+	if usesSQLite {
+		stream := bufio.NewReader(body)
+		if _, err := stream.Peek(1); err != nil {
+			return &appError{err, "", http.StatusBadRequest}
+		}
+		body = stream
+	}
 	if exists, err := blockmgr.Exists(storeID, blockID); err == nil && exists {
 		return nil
 	}
 
-	if err := blockmgr.Write(storeID, blockID, r.Body); err != nil {
+	if err := blockmgr.Write(storeID, blockID, body); err != nil {
 		err := fmt.Errorf("Failed to write block %.8s:%s: %v", storeID, blockID, err)
 		return &appError{err, "", http.StatusInternalServerError}
 	}
 
-	sendStatisticMsg(storeID, user, "sync-file-upload", uint64(r.ContentLength))
+	blockSize := r.ContentLength
+	if usesSQLite && blockSize < 0 {
+		blockSize, _ = blockmgr.Stat(storeID, blockID)
+	}
+	sendStatisticMsg(storeID, user, "sync-file-upload", uint64(blockSize))
 
 	return nil
 }
@@ -1066,8 +1141,9 @@ func putUpdateBranchCB(rsp http.ResponseWriter, r *http.Request) *appError {
 		return appErr
 	}
 
+	usesSQLite := repomgr.UsesSQLite()
 	appErr = checkPermission(repoID, user, "upload", false)
-	if appErr != nil && appErr.Code == http.StatusForbidden {
+	if appErr != nil && (usesSQLite || appErr.Code == http.StatusForbidden) {
 		return appErr
 	}
 
@@ -1083,8 +1159,14 @@ func putUpdateBranchCB(rsp http.ResponseWriter, r *http.Request) *appError {
 		return &appError{err, "", http.StatusInternalServerError}
 	}
 
+	if usesSQLite && !newCommit.ParentID.Valid {
+		return &appError{nil, "", http.StatusBadRequest}
+	}
 	base, err := commitmgr.Load(repoID, newCommit.ParentID.String)
 	if err != nil {
+		if usesSQLite {
+			return &appError{nil, "", http.StatusBadRequest}
+		}
 		err := fmt.Errorf("Failed to get commit %s for repo %s", newCommit.ParentID.String, repoID)
 		return &appError{err, "", http.StatusInternalServerError}
 	}
@@ -1106,6 +1188,11 @@ func putUpdateBranchCB(rsp http.ResponseWriter, r *http.Request) *appError {
 
 	if option.VerifyClientBlocks {
 		if body, err := checkBlocks(r.Context(), repo, base, newCommit); err != nil {
+			if usesSQLite {
+				rsp.WriteHeader(seafHTTPResBlockMissing)
+				io.WriteString(rsp, body)
+				return nil
+			}
 			return &appError{nil, body, seafHTTPResBlockMissing}
 		}
 	}
@@ -1155,6 +1242,9 @@ func checkBlocks(ctx context.Context, repo *repomgr.Repo, base, remote *commitmg
 
 	if len(aux.fileList) == 0 {
 		return "", nil
+	}
+	if repomgr.UsesSQLite() {
+		slices.Reverse(aux.fileList)
 	}
 
 	body, _ := json.Marshal(aux.fileList)
@@ -1600,6 +1690,10 @@ func calculateSendObjectList(ctx context.Context, repo *repomgr.Repo, serverHead
 			return nil, ErrTimeout
 		}
 		return nil, err
+	}
+	if option.DBType == "sqlite" {
+		// The C traversal prepends each discovered object, including the root.
+		slices.Reverse(info.results)
 	}
 	return info.results, nil
 }

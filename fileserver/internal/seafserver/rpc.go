@@ -24,7 +24,7 @@ const (
 )
 
 // RPCHandlers exposes the repository reads using the existing Searpc names.
-func (r *Reader) RPCHandlers(defaultKeepDays int) map[string]searpc.Handler {
+func (r *Reader) RPCHandlers(config *ServerConfig) map[string]searpc.Handler {
 	return map[string]searpc.Handler{
 		"seafile_get_repo":            r.getRepo,
 		"seafile_get_commit":          r.getCommit,
@@ -33,7 +33,7 @@ func (r *Reader) RPCHandlers(defaultKeepDays int) map[string]searpc.Handler {
 		"seafile_get_repo_owner":      r.getRepoOwner,
 		"seafile_is_repo_owner":       r.isRepoOwner,
 		"get_repo_status":             r.getRepoStatus,
-		"get_repo_history_limit":      r.getRepoHistoryLimit(defaultKeepDays),
+		"get_repo_history_limit":      r.getRepoHistoryLimit(config),
 	}
 }
 

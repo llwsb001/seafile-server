@@ -11,7 +11,6 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"syscall"
 
@@ -31,7 +30,7 @@ func main() {
 func run(ctx context.Context, args []string) error {
 	flags := flag.NewFlagSet("seaf-server", flag.ContinueOnError)
 	var dataDir, confDir, socketDir, ccnetDir string
-	var foreground, enableShareWrites bool
+	var foreground, enableShareWrites, enableManagementRPCs bool
 	flags.StringVar(&dataDir, "d", "", "seafile data directory")
 	flags.StringVar(&dataDir, "seafdir", "", "seafile data directory")
 	flags.StringVar(&confDir, "F", "", "central configuration directory")
@@ -43,11 +42,12 @@ func run(ctx context.Context, args []string) error {
 	flags.BoolVar(&foreground, "f", false, "run in the foreground")
 	flags.BoolVar(&foreground, "foreground", false, "run in the foreground")
 	flags.BoolVar(&enableShareWrites, "enable-share-writes", false, "enable ordinary SQLite share writes")
+	flags.BoolVar(&enableManagementRPCs, "enable-management-rpcs", false, "enable management RPCs on a private socket")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
 	if !foreground || dataDir == "" || flags.NArg() != 0 {
-		return errors.New("usage: seaf-server -f -d data-dir [-F config-dir] [-c ccnet-dir] [-p socket-dir] [--enable-share-writes]")
+		return errors.New("usage: seaf-server -f -d data-dir [-F config-dir] [-c ccnet-dir] [-p socket-dir] [--enable-share-writes] [--enable-management-rpcs]")
 	}
 	if enableShareWrites && ccnetDir == "" {
 		return errors.New("--enable-share-writes requires -c")
@@ -78,12 +78,8 @@ func run(ctx context.Context, args []string) error {
 	defer db.Close()
 
 	reader := seafserver.NewReader(db, dataDir)
-	// The C server reads keep_days as a signed decimal integer.
-	keepDays, err := strconv.ParseInt(config.Section("history").Key("keep_days").String(), 10, 32)
-	if err != nil {
-		keepDays = -1
-	}
-	handlers := reader.RPCHandlers(int(keepDays))
+	serverConfig := seafserver.NewServerConfig(db, confData)
+	handlers := reader.RPCHandlers(serverConfig)
 	maps.Copy(handlers, seafserver.EventRPCHandlers())
 	if ccnetDir != "" {
 		identity, err := seafserver.OpenIdentityReadOnly(ctx, ccnetDir)
@@ -103,11 +99,19 @@ func run(ctx context.Context, args []string) error {
 		defer writer.Close()
 		maps.Copy(handlers, writer.RPCHandlers())
 	}
+	if enableManagementRPCs {
+		writer, err := seafserver.OpenSQLiteReadWrite(dbPath)
+		if err != nil {
+			return err
+		}
+		defer writer.Close()
+		maps.Copy(handlers, serverConfig.RPCHandlers(writer))
+	}
 	tokenMode, tokenTTL, err := webTokenSettings(confData, os.Getenv("ENABLE_GO_FILESERVER"))
 	if err != nil {
 		return fmt.Errorf("load Web access token settings from %s: %w", confPath, err)
 	}
-	listener, err := listenRPC(filepath.Join(socketDir, "seafile.sock"), tokenMode)
+	listener, err := listenRPC(filepath.Join(socketDir, "seafile.sock"), tokenMode || enableManagementRPCs)
 	if err != nil {
 		return err
 	}

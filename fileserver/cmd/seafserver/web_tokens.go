@@ -79,6 +79,11 @@ func listenRPC(path string, private bool) (net.Listener, error) {
 		listener.Close()
 		return nil, fmt.Errorf("RPC socket %q must have mode 0700", path)
 	}
+	stat := info.Sys().(*syscall.Stat_t)
+	if stat.Uid != uint32(os.Geteuid()) {
+		listener.Close()
+		return nil, fmt.Errorf("RPC socket %q must belong to the server user", path)
+	}
 	if err := unix.Listen(fd, unix.SOMAXCONN); err != nil {
 		listener.Close()
 		return nil, fmt.Errorf("listen on RPC socket %q: %w", path, err)

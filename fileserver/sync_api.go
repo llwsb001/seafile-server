@@ -125,14 +125,14 @@ func getFsId(args ...interface{}) error {
 	}
 
 	clientHead := queries.Get("client-head")
-	if (clientHead != "" || option.DBType == "sqlite" && queries.Has("client-head")) && !utils.IsObjectIDValid(clientHead) {
+	if clientHead != "" && !utils.IsObjectIDValid(clientHead) {
 		msg := "Invalid client-head parameter."
 		appErr := &appError{nil, msg, http.StatusBadRequest}
 		resChan <- &calResult{"", appErr}
 		return nil
 	}
 
-	dirOnly := queries.Get("dir-only") != "" || option.DBType == "sqlite" && queries.Has("dir-only")
+	dirOnly := queries.Get("dir-only") != ""
 
 	vars := mux.Vars(r)
 	repoID := vars["repoid"]

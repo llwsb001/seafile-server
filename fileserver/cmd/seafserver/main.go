@@ -87,16 +87,18 @@ func run(ctx context.Context, args []string) error {
 	maps.Copy(handlers, seafserver.EventRPCHandlers())
 	quota := seafserver.NewUserQuota(db, serverConfig)
 	maps.Copy(handlers, quota.RPCHandlers())
+	var identity *seafserver.Identity
+	cloudModeValue := config.Section("general").Key("cloud_mode").String()
+	cloudMode := cloudModeValue == "true" || cloudModeValue == "1"
 	if ccnetDir != "" {
-		identity, err := seafserver.OpenIdentityReadOnly(ctx, ccnetDir)
+		identity, err = seafserver.OpenIdentityReadOnly(ctx, ccnetDir)
 		if err != nil {
 			return err
 		}
 		defer identity.Close()
 		maps.Copy(handlers, identity.RPCHandlers())
 		handlers["seafile_get_user_share_usage"] = quota.ShareUsageRPC(identity)
-		cloudMode := config.Section("general").Key("cloud_mode").String()
-		maps.Copy(handlers, reader.PermissionRPCHandlers(identity, cloudMode == "true" || cloudMode == "1"))
+		maps.Copy(handlers, reader.PermissionRPCHandlers(identity, cloudMode))
 		if enableManagementRPCs {
 			organizations, err := seafserver.OpenOrganizations(ccnetDir, identity)
 			if err != nil {
@@ -125,7 +127,8 @@ func run(ctx context.Context, args []string) error {
 		maps.Copy(handlers, reader.SyncTokenRPCHandlers(writer))
 		maps.Copy(handlers, reader.RepoCreationRPCHandlers(writer))
 		maps.Copy(handlers, reader.DirectoryShareRPCHandlers(writer))
-		if ccnetDir != "" {
+		if identity != nil {
+			maps.Copy(handlers, reader.FileWriteRPCHandlers(writer, identity, cloudMode))
 			groupManagement, err := seafserver.OpenGroupManagement(ccnetDir, writer)
 			if err != nil {
 				return err

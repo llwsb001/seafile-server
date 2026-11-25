@@ -237,14 +237,8 @@ type organization struct {
 }
 
 func (s *Identity) organization(ctx context.Context, orgID int) (*organization, error) {
-	org := &organization{ID: orgID}
-	err := s.orgs.QueryRowContext(ctx,
-		`SELECT org_name, url_prefix, creator, COALESCE(ctime, 0) FROM Organization WHERE org_id = ?`, orgID).
-		Scan(&org.Name, &org.URLPrefix, &org.Creator, &org.CreatedAt)
-	if err != nil {
-		return nil, err
-	}
-	return org, nil
+	const query = "SELECT " + orgFields + ", NULL, 0 FROM Organization o WHERE o.org_id = ?"
+	return scanOrganization(s.orgs.QueryRowContext(ctx, query, orgID))
 }
 
 func (s *Identity) orgUserExists(ctx context.Context, orgID int, email string) (int, error) {

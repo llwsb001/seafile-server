@@ -21,9 +21,12 @@ type permissionReader struct {
 func (r *Reader) PermissionRPCHandlers(identity *Identity, cloudMode bool) map[string]searpc.Handler {
 	permissions := &permissionReader{db: r.db, identity: identity, cloudMode: cloudMode}
 	return map[string]searpc.Handler{
-		"check_permission":         permissions.handler(1),
-		"check_permission_by_path": permissions.handler(2),
-		"get_group_repos_by_user":  r.listGroupReposByUser(identity),
+		"check_permission":              permissions.handler(1),
+		"check_permission_by_path":      permissions.handler(2),
+		"get_group_repos_by_user":       r.listGroupReposByUser(identity, false),
+		"get_org_group_repos_by_user":   r.listGroupReposByUser(identity, true),
+		"get_group_shared_repo_by_path": r.groupSharedRepoByPath(identity),
+		"convert_repo_path":             r.convertSharedRepoPath(identity),
 	}
 }
 
@@ -98,15 +101,11 @@ func (s *permissionReader) check(ctx context.Context, repoID, user string) (*str
 	if err != nil {
 		return nil, err
 	}
-	ids := make([]int, 0, len(groups))
-	for _, group := range groups {
-		ids = append(ids, group.ID)
-	}
-	groupIDs, _ := json.Marshal(ids) // A slice of integers always encodes as JSON.
+	groupIDs := encodeGroupIDs(groupInfoIDs(groups))
 
 	if virtual {
 		if len(groups) != 0 {
-			perm, err := s.folderPermission(ctx, path, true, groupFolders, repoID, string(groupIDs))
+			perm, err := s.folderPermission(ctx, path, true, groupFolders, repoID, groupIDs)
 			if perm != nil || err != nil {
 				return perm, err
 			}
@@ -117,7 +116,7 @@ func (s *permissionReader) check(ctx context.Context, repoID, user string) (*str
 		}
 	}
 	if len(groups) != 0 {
-		perm, err := s.lookupText(ctx, groupShare, repoID, string(groupIDs))
+		perm, err := s.lookupText(ctx, groupShare, repoID, groupIDs)
 		if perm != nil || err != nil {
 			return perm, err
 		}

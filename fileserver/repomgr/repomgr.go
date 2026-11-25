@@ -762,6 +762,9 @@ func UpdateRepoInfo(repoID, commitID string) error {
 }
 
 func HasLastGCID(repoID, clientID string) (bool, error) {
+	if UsesSQLite() {
+		return false, nil
+	}
 	sqlStr := "SELECT 1 FROM LastGCID WHERE repo_id = ? AND client_id = ?"
 
 	var exist int
@@ -780,6 +783,9 @@ func HasLastGCID(repoID, clientID string) (bool, error) {
 }
 
 func GetLastGCID(repoID, clientID string) (string, error) {
+	if UsesSQLite() {
+		return "", nil
+	}
 	sqlStr := "SELECT gc_id FROM LastGCID WHERE repo_id = ? AND client_id = ?"
 
 	var gcID sql.NullString
@@ -796,6 +802,10 @@ func GetLastGCID(repoID, clientID string) (string, error) {
 }
 
 func GetCurrentGCID(repoID string) (string, error) {
+	// The C SQLite schema uses offline GC and has no upload generation tables.
+	if UsesSQLite() {
+		return "", nil
+	}
 	sqlStr := "SELECT gc_id FROM GCID WHERE repo_id = ?"
 
 	var gcID sql.NullString
@@ -812,6 +822,9 @@ func GetCurrentGCID(repoID string) (string, error) {
 }
 
 func RemoveLastGCID(repoID, clientID string) error {
+	if UsesSQLite() {
+		return nil
+	}
 	sqlStr := "DELETE FROM LastGCID WHERE repo_id = ? AND client_id = ?"
 	ctx, cancel := context.WithTimeout(context.Background(), option.DBOpTimeout)
 	defer cancel()
@@ -822,6 +835,9 @@ func RemoveLastGCID(repoID, clientID string) error {
 }
 
 func SetLastGCID(repoID, clientID, gcID string) error {
+	if UsesSQLite() {
+		return nil
+	}
 	exist, err := HasLastGCID(repoID, clientID)
 	if err != nil {
 		return err

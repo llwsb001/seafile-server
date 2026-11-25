@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -23,6 +24,28 @@ import (
 )
 
 const syncFixtureRepo = "33ce892b-56e2-4352-8608-79075c6511cd"
+
+func TestSQLitePermissionHonorsRequestCancellation(t *testing.T) {
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	oldDB, oldClient, oldTimeout := seafileDB, rpcclient, option.DBOpTimeout
+	repomgr.Init(db)
+	rpcclient = searpc.Init(filepath.Join(t.TempDir(), "seafile.sock"), seafserver.RPCService, 0)
+	option.DBOpTimeout = time.Second
+	defer func() {
+		repomgr.Init(oldDB)
+		rpcclient, option.DBOpTimeout = oldClient, oldTimeout
+	}()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	appErr := checkPermission(ctx, syncFixtureRepo, "reader@example.test", "download", false)
+	if appErr == nil || !errors.Is(appErr.Error, context.Canceled) {
+		t.Fatalf("expected cancelled permission lookup, got %v", appErr)
+	}
+}
 
 func TestSQLiteSyncTokenRevocation(t *testing.T) {
 	if path := os.Getenv("SEAFILE_TEST_SYNC_CONSUMER_DB"); path != "" {
@@ -192,8 +215,8 @@ func runSyncTokenConsumer(t *testing.T, path string) {
 		req.Header.Set("Seafile-Repo-Token", token)
 		response := httptest.NewRecorder()
 		router.ServeHTTP(response, req)
-		if _, cached := tokenCache.Load(token); cached != (response.Code == http.StatusOK) {
-			t.Fatal("sync endpoint did not warm or clear the existing token cache")
+		if _, cached := tokenCache.Load(token); cached {
+			t.Fatal("SQLite sync endpoint cached a token that can be revoked by the core")
 		}
 		fmt.Println(response.Code)
 	}

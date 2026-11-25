@@ -16,6 +16,7 @@ import (
 	"unsafe"
 
 	"github.com/haiwen/seafile-server/fileserver/objstore"
+	"github.com/haiwen/seafile-server/fileserver/option"
 	"github.com/haiwen/seafile-server/fileserver/utils"
 	jsoniter "github.com/json-iterator/go"
 
@@ -380,6 +381,9 @@ func NewDirent(id string, name string, mode uint32, mtime int64, modifier string
 
 // NewSeafdir initializes a SeafDir object
 func NewSeafdir(version int, entries []*SeafDirent) (*SeafDir, error) {
+	if version == 0 && option.DBType == "sqlite" {
+		return nil, errLegacyObjectWrite
+	}
 	dir := new(SeafDir)
 	dir.Version = version
 	dir.Entries = entries
@@ -401,6 +405,9 @@ func NewSeafdir(version int, entries []*SeafDirent) (*SeafDir, error) {
 
 // NewSeafile initializes a Seafile object
 func NewSeafile(version int, fileSize int64, blkIDs []string) (*Seafile, error) {
+	if version == 0 && option.DBType == "sqlite" {
+		return nil, errLegacyObjectWrite
+	}
 	seafile := new(Seafile)
 	seafile.Version = version
 	seafile.FileSize = uint64(fileSize)
@@ -571,7 +578,7 @@ func ReadRaw(repoID string, objID string, w io.Writer) error {
 
 // WriteRaw writes data in binary format to storage backend.
 func WriteRaw(repoID string, objID string, r io.Reader) error {
-	err := store.Write(repoID, objID, r, false)
+	err := store.Write(repoID, objID, r, option.DBType == "sqlite")
 	if err != nil {
 		return err
 	}
@@ -589,7 +596,7 @@ func GetSeafileWithZlibReader(repoID string, fileID string, reader io.ReadCloser
 }
 
 func getSeafile(repoID string, fileID string, reader io.ReadCloser) (*Seafile, error) {
-	return readSeafile(store, repoID, fileID, 1, reader)
+	return readSeafile(store, repoID, fileID, defaultReadVersion(), reader)
 }
 
 // ReadSeafile loads a file object from the given store and repository version.
@@ -608,7 +615,7 @@ func readSeafile(objects *objstore.ObjectStore, repoID, fileID string, version i
 	if err := objects.Read(repoID, fileID, &buf); err != nil {
 		return nil, fmt.Errorf("read file object %s/%s: %w", repoID, fileID, err)
 	}
-	if version == 0 {
+	if isLegacyObject(version, buf.Bytes(), SeafMetadataTypeFile) {
 		return decodeLegacyFile(fileID, buf.Bytes())
 	}
 	seafile := &Seafile{FileID: fileID}
@@ -664,7 +671,7 @@ func getSeafdir(repoID string, dirID string, reader io.ReadCloser, useCache bool
 			return dir, nil
 		}
 	}
-	seafdir, err := readSeafdir(store, repoID, dirID, 1, reader)
+	seafdir, err := readSeafdir(store, repoID, dirID, defaultReadVersion(), reader)
 	if err != nil {
 		return nil, err
 	}
@@ -690,7 +697,7 @@ func readSeafdir(objects *objstore.ObjectStore, repoID, dirID string, version in
 	if err := objects.Read(repoID, dirID, &buf); err != nil {
 		return nil, fmt.Errorf("read directory object %s/%s: %w", repoID, dirID, err)
 	}
-	if version == 0 {
+	if isLegacyObject(version, buf.Bytes(), SeafMetadataTypeDir) {
 		return decodeLegacyDir(dirID, buf.Bytes())
 	}
 	seafdir := &SeafDir{DirID: dirID}

@@ -4,10 +4,30 @@ import (
 	"crypto/sha1"
 	"encoding/binary"
 	"encoding/hex"
+	"errors"
 	"fmt"
 
+	"github.com/haiwen/seafile-server/fileserver/option"
 	"github.com/haiwen/seafile-server/fileserver/utils"
 )
+
+const detectObjectVersion = -1
+
+var errLegacyObjectWrite = errors.New("legacy FS object creation requires the C fileserver")
+
+// The fileserver reads through store IDs that may be shared by virtual repos.
+// The old binary objects have a type prefix distinct from a zlib stream.
+func defaultReadVersion() int {
+	if option.DBType == "sqlite" {
+		return detectObjectVersion
+	}
+	return 1
+}
+
+func isLegacyObject(version int, data []byte, objectType uint32) bool {
+	return version == 0 || (version == detectObjectVersion && len(data) >= 4 &&
+		binary.BigEndian.Uint32(data) == objectType)
+}
 
 // Legacy objects use the binary layouts in common/fs-mgr.c.
 func decodeLegacyFile(id string, data []byte) (*Seafile, error) {

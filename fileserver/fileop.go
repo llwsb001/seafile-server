@@ -35,6 +35,7 @@ import (
 	"github.com/haiwen/seafile-server/fileserver/commitmgr"
 	"github.com/haiwen/seafile-server/fileserver/diff"
 	"github.com/haiwen/seafile-server/fileserver/fsmgr"
+	"github.com/haiwen/seafile-server/fileserver/internal/seafserver"
 	"github.com/haiwen/seafile-server/fileserver/option"
 	"github.com/haiwen/seafile-server/fileserver/repomgr"
 	"github.com/haiwen/seafile-server/fileserver/utils"
@@ -2123,8 +2124,7 @@ var (
 func genNewCommit(repo *repomgr.Repo, base *commitmgr.Commit, newRoot, user, desc string, handleConncurrentUpdate bool, lastGCID string, checkGC bool) (string, error) {
 	var retryCnt int
 	repoID := repo.ID
-	commit := commitmgr.NewCommit(repoID, base.CommitID, newRoot, user, desc)
-	repomgr.RepoToCommit(repo, commit)
+	commit := newFileServerCommit(repo, base, newRoot, user, desc)
 	err := commitmgr.Save(commit)
 	if err != nil {
 		err := fmt.Errorf("failed to add commit: %v", err)
@@ -2188,6 +2188,12 @@ func fastForwardOrMerge(user, token string, repo *repomgr.Repo, base, newCommit 
 		if retryCnt < 3 {
 			random := rand.Intn(10) + 1
 			time.Sleep(time.Duration(random*100) * time.Millisecond)
+			if repomgr.UsesSQLite() {
+				repo = repomgr.Get(repo.ID)
+				if repo == nil {
+					return fmt.Errorf("failed to reload repository %s", newCommit.RepoID)
+				}
+			}
 			retryCnt++
 		} else {
 			err = fmt.Errorf("stop updating repo %s after 3 retries", repo.ID)
@@ -2208,7 +2214,8 @@ func genCommitNeedRetry(repo *repomgr.Repo, base *commitmgr.Commit, commit *comm
 		return false, err
 	}
 
-	if base.CommitID != currentHead.CommitID {
+	repeated := repomgr.UsesSQLite() && commit.CommitID == currentHead.CommitID
+	if base.CommitID != currentHead.CommitID && !repeated {
 		if !handleConncurrentUpdate {
 			return false, ErrConflict
 		}
@@ -2233,8 +2240,7 @@ func genCommitNeedRetry(repo *repomgr.Repo, base *commitmgr.Commit, commit *comm
 		}
 
 		secondParentID = commit.CommitID
-		mergedCommit = commitmgr.NewCommit(repoID, currentHead.CommitID, opt.mergedRoot, user, mergeDesc)
-		repomgr.RepoToCommit(repo, mergedCommit)
+		mergedCommit = newFileServerCommit(repo, currentHead, opt.mergedRoot, user, mergeDesc)
 		mergedCommit.SecondParentID.SetValid(commit.CommitID)
 		mergedCommit.NewMerge = 1
 		if opt.conflict {
@@ -2255,6 +2261,9 @@ func genCommitNeedRetry(repo *repomgr.Repo, base *commitmgr.Commit, commit *comm
 		return false, err
 	}
 	if err != nil {
+		if repomgr.UsesSQLite() && !errors.Is(err, seafserver.ErrSQLiteBranchChanged) {
+			return false, err
+		}
 		return true, nil
 	}
 
@@ -2279,6 +2288,21 @@ func genMergeDesc(repo *repomgr.Repo, mergedRoot, p1Root, p2Root string) string 
 func updateBranch(repoID, originRepoID, newCommitID, oldCommitID, secondParentID string, checkGC bool, lastGCID string) (gcConflict bool, err error) {
 	ctx, cancel := context.WithTimeout(context.Background(), option.DBOpTimeout)
 	defer cancel()
+	if repomgr.UsesSQLite() {
+		commit, err := commitmgr.Load(repoID, newCommitID)
+		if err != nil {
+			return false, fmt.Errorf("load branch commit from storage: %w", err)
+		}
+		if commit.RepoID != repoID || commit.CommitID != newCommitID {
+			return false, errors.New("branch commit does not match its storage reference")
+		}
+		advanced, err := seafserver.PublishSQLiteBranch(ctx, seafileDB, oldCommitID, commit)
+		if advanced {
+			publishBranchUpdate(repoID, newCommitID, secondParentID, false)
+		}
+		return false, err
+	}
+
 	trans, err := seafileDB.BeginTx(ctx, nil)
 	if err != nil {
 		err := fmt.Errorf("failed to start transaction: %v", err)
@@ -2339,13 +2363,15 @@ func updateBranch(repoID, originRepoID, newCommitID, oldCommitID, secondParentID
 		return false, err
 	}
 
+	publishBranchUpdate(repoID, newCommitID, secondParentID, true)
+	return false, nil
+}
+
+func publishBranchUpdate(repoID, commitID, secondParentID string, updateRepoInfo bool) {
 	if secondParentID != "" {
 		onBranchUpdated(repoID, secondParentID, false)
 	}
-
-	onBranchUpdated(repoID, newCommitID, true)
-
-	return false, nil
+	onBranchUpdated(repoID, commitID, updateRepoInfo)
 }
 
 func onBranchUpdated(repoID string, commitID string, updateRepoInfo bool) error {
@@ -2658,7 +2684,10 @@ func indexFileWorker(args ...any) error {
 			blkSize = left
 		}
 		if left > 0 {
-			job := chunkingData{repoID, filePath, handler, offset, cryptKey}
+			job := chunkingData{
+				repoID: repoID, filePath: filePath, handler: handler,
+				offset: offset, length: blkSize, cryptKey: cryptKey,
+			}
 			select {
 			case chunkJobs <- job:
 				left -= blkSize
@@ -2727,6 +2756,7 @@ type chunkingData struct {
 	filePath string
 	handler  *multipart.FileHeader
 	offset   int64
+	length   int64
 	cryptKey *seafileCrypt
 }
 
@@ -2782,7 +2812,6 @@ func chunkFile(job chunkingData) (string, error) {
 	offset := job.offset
 	filePath := job.filePath
 	handler := job.handler
-	blkSize := option.FixedBlockSize
 	cryptKey := job.cryptKey
 	var file multipart.File
 	if handler != nil {
@@ -2807,15 +2836,12 @@ func chunkFile(job chunkingData) (string, error) {
 		err := fmt.Errorf("failed to seek file: %v", err)
 		return "", err
 	}
-	buf := make([]byte, blkSize)
-	n, err := file.Read(buf)
-	if err != nil {
-		err := fmt.Errorf("failed to seek file: %v", err)
-		return "", err
+	buf := make([]byte, job.length)
+	if _, err := io.ReadFull(file, buf); err != nil {
+		return "", fmt.Errorf("read file block at offset %d: %w", offset, err)
 	}
-	buf = buf[:n]
 
-	blkID, err := writeChunk(repoID, buf, int64(n), cryptKey)
+	blkID, err := writeChunk(repoID, buf, job.length, cryptKey)
 	if err != nil {
 		err := fmt.Errorf("failed to write chunk: %v", err)
 		return "", err

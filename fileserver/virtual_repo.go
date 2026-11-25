@@ -13,6 +13,7 @@ import (
 	"github.com/haiwen/seafile-server/fileserver/commitmgr"
 	"github.com/haiwen/seafile-server/fileserver/diff"
 	"github.com/haiwen/seafile-server/fileserver/fsmgr"
+	"github.com/haiwen/seafile-server/fileserver/internal/seafserver"
 	"github.com/haiwen/seafile-server/fileserver/option"
 	"github.com/haiwen/seafile-server/fileserver/repomgr"
 	"github.com/haiwen/seafile-server/fileserver/workerpool"
@@ -364,11 +365,16 @@ func editRepoNeedRetry(repoID, name, desc, user string) (bool, error) {
 
 	_, err = updateBranch(repoID, repo.StoreID, commit.CommitID, parent.CommitID, "", false, "")
 	if err != nil {
+		if repomgr.UsesSQLite() && !errors.Is(err, seafserver.ErrSQLiteBranchChanged) {
+			return false, err
+		}
 		return true, nil
 	}
 
-	if err := repomgr.UpdateRepoInfo(repoID, commit.CommitID); err != nil {
-		log.Warnf("failed to update repo info %s: %v", repoID, err)
+	if !repomgr.UsesSQLite() {
+		if err := repomgr.UpdateRepoInfo(repoID, commit.CommitID); err != nil {
+			log.Warnf("failed to update repo info %s: %v", repoID, err)
+		}
 	}
 
 	return false, nil

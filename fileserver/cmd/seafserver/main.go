@@ -105,6 +105,11 @@ func run(ctx context.Context, args []string) error {
 		}
 		defer writer.Close()
 		maps.Copy(handlers, serverConfig.RPCHandlers(writer))
+
+		passwords := seafserver.NewRepoPasswords(reader)
+		maps.Copy(handlers, passwords.RPCHandlers())
+		stopPasswords := passwords.StartCleanup(ctx)
+		defer stopPasswords()
 	}
 	tokenMode, tokenTTL, err := webTokenSettings(confData, os.Getenv("ENABLE_GO_FILESERVER"))
 	if err != nil {

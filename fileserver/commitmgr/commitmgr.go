@@ -7,11 +7,14 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"os"
 	"time"
 
 	"github.com/haiwen/seafile-server/fileserver/objstore"
+	"github.com/haiwen/seafile-server/fileserver/option"
 	"github.com/haiwen/seafile-server/fileserver/utils"
 )
 
@@ -39,6 +42,7 @@ type Commit struct {
 	PwdHash        string `json:"pwd_hash,omitempty"`
 	PwdHashAlgo    string `json:"pwd_hash_algo,omitempty"`
 	PwdHashParams  string `json:"pwd_hash_params,omitempty"`
+	NoLocalHistory int    `json:"no_local_history,omitempty"`
 	Version        int    `json:"version,omitempty"`
 	Conflict       int    `json:"conflict,omitempty"`
 	NewMerge       int    `json:"new_merge,omitempty"`
@@ -54,14 +58,19 @@ func Init(seafileConfPath string, seafileDataDir string) {
 
 // NewCommit initializes a Commit object.
 func NewCommit(repoID, parentID, newRoot, user, desc string) *Commit {
+	commit := newCommit(repoID, parentID, newRoot, user, desc, time.Now().Unix())
+	commit.CommitID = computeCommitID(commit)
+	return commit
+}
+
+func newCommit(repoID, parentID, newRoot, user, desc string, timestamp int64) *Commit {
 	commit := new(Commit)
 	commit.RepoID = repoID
 	commit.RootID = newRoot
 	commit.Desc = desc
 	commit.CreatorName = user
 	commit.CreatorID = "0000000000000000000000000000000000000000"
-	commit.Ctime = time.Now().Unix()
-	commit.CommitID = computeCommitID(commit)
+	commit.Ctime = timestamp
 	if parentID != "" {
 		commit.ParentID.SetValid(parentID)
 	}
@@ -140,11 +149,7 @@ func ReadRaw(repoID string, commitID string, w io.Writer) error {
 
 // WriteRaw writes data in binary format to storage backend.
 func WriteRaw(repoID string, commitID string, r io.Reader) error {
-	err := store.Write(repoID, commitID, r, false)
-	if err != nil {
-		return err
-	}
-	return nil
+	return store.Write(repoID, commitID, r, option.DBType == "sqlite")
 }
 
 // Load commit from storage backend.
@@ -168,23 +173,31 @@ func LoadFromStore(objects *objstore.ObjectStore, repoID, commitID string) (*Com
 
 // Save commit to storage backend.
 func Save(commit *Commit) error {
-	exist, _ := store.Exists(commit.RepoID, commit.CommitID)
-	if exist {
-		return nil
+	if option.DBType == "sqlite" {
+		return SaveCanonicalToStore(store, commit)
 	}
 
 	var buf bytes.Buffer
-	err := commit.ToData(&buf)
-	if err != nil {
+	if err := commit.ToData(&buf); err != nil {
 		return err
 	}
+	return SaveRaw(commit.RepoID, commit.CommitID, &buf)
+}
 
-	err = WriteRaw(commit.RepoID, commit.CommitID, &buf)
-	if err != nil {
+// SaveRaw persists a validated client commit without changing its JSON fields.
+func SaveRaw(repoID, commitID string, data io.Reader) error {
+	return saveIfMissing(store, repoID, commitID, data, option.DBType == "sqlite")
+}
+
+func saveIfMissing(objects *objstore.ObjectStore, repoID, commitID string, data io.Reader, durable bool) error {
+	exists, err := objects.Exists(repoID, commitID)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-
-	return err
+	if exists {
+		return nil
+	}
+	return objects.Write(repoID, commitID, data, durable)
 }
 
 // Exists checks commit if exists.

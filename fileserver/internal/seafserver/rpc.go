@@ -37,6 +37,7 @@ func (r *Reader) RPCHandlers(config *ServerConfig) map[string]searpc.Handler {
 		"seafile_is_repo_owner":       r.isRepoOwner,
 		"get_repo_status":             r.getRepoStatus,
 		"get_repo_history_limit":      r.getRepoHistoryLimit(config),
+		"get_file_count_info_by_path": r.fileCountInfoByPath,
 
 		"seafile_list_share_repos":          r.listShareRepos,
 		"seafile_list_repo_shared_to":       r.listRepoSharedTo,
@@ -55,6 +56,28 @@ func (r *Reader) RPCHandlers(config *ServerConfig) map[string]searpc.Handler {
 		"count_inner_pub_repos":             r.countInnerPublicRepos,
 		"is_inner_pub_repo":                 r.isInnerPublicRepo,
 	}
+}
+
+func (r *Reader) fileCountInfoByPath(ctx context.Context, args []json.RawMessage) (any, *searpc.RPCError) {
+	repoID, path := stringArgument(args, 0), stringArgument(args, 1)
+	if repoID == nil || path == nil {
+		return nil, rpcError(errBadArgs, "Argument should not be null")
+	}
+	repo, err := r.Repo(ctx, *repoID)
+	if err != nil {
+		return nil, rpcError(errGeneral, "Library not exists")
+	}
+	dir, rpcErr := r.directoryByPath(repo, repo.RootID, *path)
+	if rpcErr != nil {
+		return nil, rpcError(errBadArgs, "Bad path")
+	}
+	counts, err := fsmgr.ReadFileCountInfo(r.fs, repo.StoreID, dir.DirID, repo.Version)
+	if err != nil {
+		return nil, nil
+	}
+	return map[string]any{
+		"file-count": counts.FileCount, "dir-count": counts.DirCount, "size": counts.Size,
+	}, nil
 }
 
 func stringArgument(args []json.RawMessage, index int) *string {

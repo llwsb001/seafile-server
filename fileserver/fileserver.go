@@ -276,7 +276,8 @@ func main() {
 
 	sizeSchedulerInit()
 
-	virtualRepoInit()
+	stopVirtualRepo := virtualRepoInit()
+	defer stopVirtualRepo()
 
 	initUpload()
 

@@ -38,7 +38,7 @@ type fileWriter struct {
 	limits      FileMoveLimits
 }
 
-// FileWriteRPCHandlers exposes ordinary SQLite library writes on the private core socket.
+// FileWriteRPCHandlers exposes SQLite library writes on the private core socket.
 func (r *Reader) FileWriteRPCHandlers(ctx context.Context, db *sql.DB, identity *Identity, cloudMode bool, quota *UserQuota, limits FileMoveLimits) (map[string]searpc.Handler, func()) {
 	writer := &fileWriter{reader: r, db: db,
 		permissions: &permissionReader{db: r.db, identity: identity, cloudMode: cloudMode},
@@ -89,7 +89,7 @@ func (w *fileWriter) edit(count int, edit fileEdit) searpc.Handler {
 
 func (w *fileWriter) update(ctx context.Context, repoID, user string, values []string, edit fileEdit) *searpc.RPCError {
 	for range maxFileWriteRetries {
-		tree, rpcErr := w.writableTree(ctx, repoID, user)
+		tree, rpcErr := w.writableTree(ctx, repoID, user, true)
 		if rpcErr != nil {
 			return rpcErr
 		}
@@ -107,7 +107,7 @@ func (w *fileWriter) update(ctx context.Context, repoID, user string, values []s
 	return rpcError(520, "Concurrent update")
 }
 
-func (w *fileWriter) writableTree(ctx context.Context, repoID, user string) (*fileTree, *searpc.RPCError) {
+func (w *fileWriter) writableTree(ctx context.Context, repoID, user string, allowVirtual bool) (*fileTree, *searpc.RPCError) {
 	if !validRepoID(repoID) {
 		return nil, rpcError(errBadArgs, "Invalid repo id")
 	}
@@ -115,7 +115,7 @@ func (w *fileWriter) writableTree(ctx context.Context, repoID, user string) (*fi
 	if err != nil {
 		return nil, rpcError(errBadArgs, "Invalid repo")
 	}
-	if repo.IsCorrupted || repo.VirtualInfo != nil || repo.Version != 1 {
+	if repo.IsCorrupted || repo.Version != 1 || (repo.VirtualInfo != nil && !allowVirtual) {
 		return nil, rpcError(errBadArgs, "File RPC requires an ordinary version 1 library")
 	}
 	permission, err := w.permissions.check(ctx, repoID, user)
@@ -125,14 +125,26 @@ func (w *fileWriter) writableTree(ctx context.Context, repoID, user string) (*fi
 	if permission == nil || *permission != "rw" {
 		return nil, rpcError(errRepoAuth, "Permission denied")
 	}
-	status, err := repomgr.LoadRepoStatus(ctx, w.reader.db, repoID)
-	if err != nil {
-		return nil, fileWriteFailure("read file write status", err)
+	if rpcErr := w.checkWriteStatus(ctx, repoID); rpcErr != nil {
+		return nil, rpcErr
 	}
-	if status != -1 && status != repomgr.RepoStatusNormal {
-		return nil, rpcError(errRepoLocked, "Repository is read-only")
+	if repo.VirtualInfo != nil {
+		if rpcErr := w.checkWriteStatus(ctx, repo.VirtualInfo.OriginRepoID); rpcErr != nil {
+			return nil, rpcErr
+		}
 	}
 	return &fileTree{reader: w.reader, repo: repo, root: repo.RootID, user: user, now: time.Now().Unix()}, nil
+}
+
+func (w *fileWriter) checkWriteStatus(ctx context.Context, repoID string) *searpc.RPCError {
+	status, err := repomgr.LoadRepoStatus(ctx, w.reader.db, repoID)
+	if err != nil {
+		return fileWriteFailure("read file write status", err)
+	}
+	if status != -1 && status != repomgr.RepoStatusNormal {
+		return rpcError(errRepoLocked, "Repository is read-only")
+	}
+	return nil
 }
 
 func (w *fileWriter) publish(ctx context.Context, tree *fileTree, description string) error {
@@ -140,7 +152,9 @@ func (w *fileWriter) publish(ctx context.Context, tree *fileTree, description st
 	if err != nil {
 		return err
 	}
-	_, err = PublishSQLiteBranch(ctx, w.db, tree.repo.HeadCommitID, commit)
+	_, err = withSQLiteWrite(ctx, w.db, func(conn *sql.Conn) (bool, error) {
+		return publishFileWrite(ctx, conn, tree.repo.HeadCommitID, commit)
+	})
 	return err
 }
 

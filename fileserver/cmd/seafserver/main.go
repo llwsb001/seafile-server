@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"log"
 	"maps"
-	"net"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -60,7 +59,11 @@ func run(ctx context.Context, args []string) error {
 		socketDir = dataDir
 	}
 	confPath := filepath.Join(confDir, "seafile.conf")
-	config, err := ini.Load(confPath)
+	confData, err := os.ReadFile(confPath)
+	if err != nil {
+		return fmt.Errorf("load %s: %w", confPath, err)
+	}
+	config, err := ini.Load(confData)
 	if err != nil {
 		return fmt.Errorf("load %s: %w", confPath, err)
 	}
@@ -99,9 +102,19 @@ func run(ctx context.Context, args []string) error {
 		defer writer.Close()
 		maps.Copy(handlers, writer.RPCHandlers())
 	}
-	listener, err := net.Listen("unix", filepath.Join(socketDir, "seafile.sock"))
+	tokenMode, tokenTTL, err := webTokenSettings(confData, os.Getenv("ENABLE_GO_FILESERVER"))
+	if err != nil {
+		return fmt.Errorf("load Web access token settings from %s: %w", confPath, err)
+	}
+	listener, err := listenRPC(filepath.Join(socketDir, "seafile.sock"), tokenMode)
 	if err != nil {
 		return err
+	}
+	if tokenMode {
+		tokens := seafserver.NewWebAccessTokens(tokenTTL)
+		maps.Copy(handlers, tokens.RPCHandlers())
+		stopCleanup := tokens.StartCleanup(ctx)
+		defer stopCleanup()
 	}
 	return searpc.Serve(ctx, listener, seafserver.RPCService, handlers)
 }

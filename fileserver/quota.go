@@ -74,6 +74,10 @@ func checkQuota(repoID string, delta int64) (int, error) {
 func getUserQuota(user string) (int64, error) {
 	var quota int64
 	sqlStr := "SELECT quota FROM UserQuota WHERE user=?"
+	_, sqliteDB := seafileDB.Driver().(*sqlite.Driver)
+	if sqliteDB {
+		sqlStr = "SELECT COALESCE(CAST(quota AS INTEGER), 0) FROM UserQuota WHERE user=?"
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), option.DBOpTimeout)
 	defer cancel()
 	row := seafileDB.QueryRowContext(ctx, sqlStr, user)
@@ -85,7 +89,7 @@ func getUserQuota(user string) (int64, error) {
 
 	if quota <= 0 {
 		quota = option.DefaultQuota
-		if _, sqliteDB := seafileDB.Driver().(*sqlite.Driver); sqliteDB {
+		if sqliteDB {
 			if override, ok := seafserver.SQLiteDefaultQuotaOverride(ctx, seafileDB); ok {
 				return override, nil
 			}

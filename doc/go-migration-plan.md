@@ -21,6 +21,8 @@ make -C "$SEAFILE_COMPAT_TESTS" test-data IMPL=c-baseline FIXTURES_DIR="$SEAFILE
 
 `SEAFILE_COMPAT_TESTS` 指向兼容仓库，`SEAFILE_FIXTURES_V1` 指向包含 `storage.tar` 的 v1 目录。验收预期是 113 个对象通过、78 个 FS 对象的规范化 JSON 通过，并能从 SQLite 打开普通库的目录树。加密样本的明文验收随 Go 密钥和解密功能接入。
 
+通过对象层基线后，将归档解到独立的临时目录。将 `SEAFILE_FIXTURES_V1` 和 `SEAFILE_FIXTURES_DATA` 分别设为 v1 目录和包含已解包 `storage/` 的目录，在 `fileserver/` 运行 `go test ./internal/seafserver -run '^TestReadFixturesV1$' -count=1 -v`。Go 验收应从 SQLite 读取三个业务库，遍历 15 个目录和 8 个文件，核对 27 个 commit 和文件引用的块。
+
 ## PR 顺序和验收条件
 
 各阶段可以拆成多个 PR。每个 PR 说明依赖及所覆盖的功能，并附上可复现的验收命令和实际结果。存在前置 PR 时，后续 PR 可以以前置分支为基线，合并时仍按依赖顺序进行。

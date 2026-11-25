@@ -15,21 +15,22 @@ type fsBackend struct {
 }
 
 func newFSBackend(seafileDataDir string, objType string) (*fsBackend, error) {
-	objDir := path.Join(seafileDataDir, "storage", objType)
-	err := os.MkdirAll(objDir, os.ModePerm)
-	if err != nil {
+	backend := filesystemAt(seafileDataDir, objType)
+	if err := os.MkdirAll(backend.objDir, os.ModePerm); err != nil {
 		return nil, err
 	}
-	tmpDir := path.Join(seafileDataDir, "tmpfiles")
-	err = os.MkdirAll(tmpDir, os.ModePerm)
-	if err != nil {
+	if err := os.MkdirAll(backend.tmpDir, os.ModePerm); err != nil {
 		return nil, err
 	}
-	backend := new(fsBackend)
-	backend.objDir = objDir
-	backend.objType = objType
-	backend.tmpDir = tmpDir
 	return backend, nil
+}
+
+func filesystemAt(dataDir, objType string) *fsBackend {
+	return &fsBackend{
+		objDir:  path.Join(dataDir, "storage", objType),
+		objType: objType,
+		tmpDir:  path.Join(dataDir, "tmpfiles"),
+	}
 }
 
 func (b *fsBackend) read(repoID string, objID string, w io.Writer) error {

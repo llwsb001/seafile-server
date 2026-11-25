@@ -4,6 +4,7 @@ package repomgr
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
@@ -67,45 +68,32 @@ func Init(seafDB *sql.DB) {
 
 // Get returns Repo object by repo ID.
 func Get(id string) *Repo {
+	ctx, cancel := context.WithTimeout(context.Background(), option.DBOpTimeout)
+	defer cancel()
+
+	repo, err := Load(ctx, seafileDB, id, commitmgr.Load)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		log.Error(err)
+	}
+	return repo
+}
+
+// Load reads the master branch, virtual repo mapping and head commit for a repo.
+func Load(ctx context.Context, db *sql.DB, id string, loadCommit func(string, string) (*commitmgr.Commit, error)) (*Repo, error) {
 	query := `SELECT r.repo_id, b.commit_id, v.origin_repo, v.path, v.base_commit FROM ` +
 		`Repo r LEFT JOIN Branch b ON r.repo_id = b.repo_id ` +
 		`LEFT JOIN VirtualRepo v ON r.repo_id = v.repo_id ` +
 		`WHERE r.repo_id = ? AND b.name = 'master'`
 
-	ctx, cancel := context.WithTimeout(context.Background(), option.DBOpTimeout)
-	defer cancel()
-	stmt, err := seafileDB.PrepareContext(ctx, query)
-	if err != nil {
-		log.Errorf("failed to prepare sql : %s ：%v", query, err)
-		return nil
-	}
-	defer stmt.Close()
-
-	rows, err := stmt.QueryContext(ctx, id)
-	if err != nil {
-		log.Errorf("failed to query sql : %v", err)
-		return nil
-	}
-	defer rows.Close()
-
 	repo := new(Repo)
-
-	var originRepoID sql.NullString
-	var path sql.NullString
-	var baseCommitID sql.NullString
-	if rows.Next() {
-		err := rows.Scan(&repo.ID, &repo.HeadCommitID, &originRepoID, &path, &baseCommitID)
-		if err != nil {
-			log.Errorf("failed to scan sql rows : %v", err)
-			return nil
-		}
-	} else {
-		return nil
+	var originRepoID, path, baseCommitID sql.NullString
+	row := db.QueryRowContext(ctx, query, id)
+	if err := row.Scan(&repo.ID, &repo.HeadCommitID, &originRepoID, &path, &baseCommitID); err != nil {
+		return nil, fmt.Errorf("load repo %s metadata: %w", id, err)
 	}
 
 	if repo.HeadCommitID == "" {
-		log.Errorf("repo %s is corrupted", id)
-		return nil
+		return nil, fmt.Errorf("repo %s has no head commit", id)
 	}
 
 	if originRepoID.Valid {
@@ -125,10 +113,9 @@ func Get(id string) *Repo {
 		repo.StoreID = repo.ID
 	}
 
-	commit, err := commitmgr.Load(repo.ID, repo.HeadCommitID)
+	commit, err := loadCommit(repo.ID, repo.HeadCommitID)
 	if err != nil {
-		log.Errorf("failed to load commit %s/%s : %v", repo.ID, repo.HeadCommitID, err)
-		return nil
+		return nil, fmt.Errorf("load repo %s head %s: %w", repo.ID, repo.HeadCommitID, err)
 	}
 
 	repo.Name = commit.RepoName
@@ -161,7 +148,7 @@ func Get(id string) *Repo {
 		}
 	}
 
-	return repo
+	return repo, nil
 }
 
 // RepoToCommit converts Repo to Commit.

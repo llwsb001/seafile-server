@@ -37,20 +37,28 @@ func NewReader(db *sql.DB, dataDir string) *Reader {
 
 // OpenSQLiteReadOnly opens an existing Seafile SQLite database.
 func OpenSQLiteReadOnly(ctx context.Context, dbPath string) (*sql.DB, error) {
-	path, err := filepath.Abs(dbPath)
+	uri, err := sqliteFileURL(dbPath)
 	if err != nil {
 		return nil, err
 	}
-	uri := url.URL{Scheme: "file", Path: filepath.ToSlash(path), RawQuery: "mode=ro"}
+	uri.RawQuery = "mode=ro"
 	db, err := sql.Open("sqlite", uri.String())
 	if err != nil {
 		return nil, err
 	}
 	if err := db.PingContext(ctx); err != nil {
 		db.Close()
-		return nil, fmt.Errorf("open SQLite database %q: %w", path, err)
+		return nil, fmt.Errorf("open SQLite database %q: %w", uri.Path, err)
 	}
 	return db, nil
+}
+
+func sqliteFileURL(dbPath string) (url.URL, error) {
+	path, err := filepath.Abs(dbPath)
+	if err != nil {
+		return url.URL{}, err
+	}
+	return url.URL{Scheme: "file", Path: filepath.ToSlash(path)}, nil
 }
 
 // Repo reads the current branch and head commit from storage.

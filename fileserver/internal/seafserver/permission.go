@@ -17,12 +17,13 @@ type permissionReader struct {
 	cloudMode bool
 }
 
-// PermissionRPCHandlers exposes the C-compatible library permission reads.
+// PermissionRPCHandlers exposes library permissions and group shares that need ccnet.
 func (r *Reader) PermissionRPCHandlers(identity *Identity, cloudMode bool) map[string]searpc.Handler {
 	permissions := &permissionReader{db: r.db, identity: identity, cloudMode: cloudMode}
 	return map[string]searpc.Handler{
 		"check_permission":         permissions.handler(1),
 		"check_permission_by_path": permissions.handler(2),
+		"get_group_repos_by_user":  r.listGroupReposByUser(identity),
 	}
 }
 

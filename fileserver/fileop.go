@@ -1444,6 +1444,9 @@ func writeBlockDataToTmpFile(r *http.Request, fsm *recvData, formFiles map[strin
 	}
 
 	handler := fileHeaders[0]
+	if repomgr.UsesSQLite() && handler.Size != fsm.rend-fsm.rstart+1 {
+		return &appError{nil, "Invalid Seafile-Content-Range", http.StatusBadRequest}
+	}
 	file, err := handler.Open()
 	if err != nil {
 		err := fmt.Errorf("failed to open file for read: %v", err)
@@ -1480,10 +1483,14 @@ func writeBlockDataToTmpFile(r *http.Request, fsm *recvData, formFiles map[strin
 		if mtime > 0 {
 			value := []byte(strconv.FormatInt(mtime, 10))
 			// There is no need to check whether setxattr succeeds, as some file systems may not support extended attributes.
-			unix.Setxattr(f.Name(), "user.seafile.file_mtime", value, 0)
+			unix.Setxattr(f.Name(), seafserver.UploadTempFileMtimeAttr, value, 0)
 		}
 
-		repomgr.AddUploadTmpFile(repoID, filePath, f.Name())
+		if err := repomgr.AddUploadTmpFile(repoID, filePath, f.Name()); err != nil {
+			f.Close()
+			os.Remove(f.Name())
+			return &appError{err, "Internal error.\n", http.StatusInternalServerError}
+		}
 		tmpFile = f.Name()
 	} else {
 		f, err = os.OpenFile(tmpFile, os.O_WRONLY, 0666)
@@ -1505,11 +1512,6 @@ func writeBlockDataToTmpFile(r *http.Request, fsm *recvData, formFiles map[strin
 		}
 	}
 
-	if fsm.rend == fsm.fsize-1 {
-		fsm.fileNames = append(fsm.fileNames, filepath.Base(filename))
-		fsm.files = append(fsm.files, tmpFile)
-	}
-
 	defer f.Close()
 	_, err = f.Seek(fsm.rstart, 0)
 	if err != nil {
@@ -1517,7 +1519,12 @@ func writeBlockDataToTmpFile(r *http.Request, fsm *recvData, formFiles map[strin
 	}
 	_, err = io.Copy(f, file)
 	if err != nil {
+		err = errors.Join(err, f.Truncate(fsm.rstart))
 		return &appError{err, "Internal error.\n", http.StatusInternalServerError}
+	}
+	if fsm.rend == fsm.fsize-1 {
+		fsm.fileNames = append(fsm.fileNames, filepath.Base(filename))
+		fsm.files = append(fsm.files, tmpFile)
 	}
 
 	return nil
@@ -1782,7 +1789,7 @@ func parseUploadHeaders(r *http.Request) (*recvData, *appError) {
 
 	fsm := new(recvData)
 
-	if op != "update" {
+	if op != "update" && op != "update-blks-api" {
 		obj := make(map[string]interface{})
 		if err := json.Unmarshal([]byte(id), &obj); err != nil {
 			err := fmt.Errorf("failed to decode obj data : %v", err)
@@ -1805,8 +1812,8 @@ func parseUploadHeaders(r *http.Request) (*recvData, *appError) {
 	fsm.fsize = -1
 
 	ranges := r.Header.Get("Content-Range")
-	if ranges != "" {
-		parseContentRange(ranges, fsm)
+	if ranges != "" && !parseContentRange(ranges, fsm) && repomgr.UsesSQLite() {
+		return nil, &appError{nil, "Invalid Seafile-Content-Range", http.StatusBadRequest}
 	}
 
 	var contentLen int64
@@ -2945,31 +2952,34 @@ func isParentMatched(uploadDir, parentDir string) bool {
 }
 
 func parseContentRange(ranges string, fsm *recvData) bool {
-	start := strings.Index(ranges, "bytes")
-	end := strings.Index(ranges, "-")
-	slash := strings.Index(ranges, "/")
-
-	if start < 0 || end < 0 || slash < 0 {
+	rest, ok := strings.CutPrefix(ranges, "bytes")
+	if !ok {
 		return false
 	}
-
-	startStr := strings.TrimLeft(ranges[start+len("bytes"):end], " ")
-	firstByte, err := strconv.ParseInt(startStr, 10, 64)
+	first, rest, ok := strings.Cut(strings.TrimLeft(rest, " "), "-")
+	if !ok {
+		return false
+	}
+	last, total, ok := strings.Cut(rest, "/")
+	if !ok {
+		return false
+	}
+	firstByte, err := strconv.ParseInt(first, 10, 64)
 	if err != nil {
 		return false
 	}
 
-	lastByte, err := strconv.ParseInt(ranges[end+1:slash], 10, 64)
+	lastByte, err := strconv.ParseInt(last, 10, 64)
 	if err != nil {
 		return false
 	}
 
-	fileSize, err := strconv.ParseInt(ranges[slash+1:], 10, 64)
+	fileSize, err := strconv.ParseInt(total, 10, 64)
 	if err != nil {
 		return false
 	}
 
-	if firstByte > lastByte || lastByte >= fileSize {
+	if firstByte < 0 || firstByte > lastByte || lastByte >= fileSize {
 		return false
 	}
 
@@ -3583,6 +3593,52 @@ func uploadBlksAPICB(rsp http.ResponseWriter, r *http.Request) *appError {
 	return nil
 }
 
+func updateBlksAPICB(rsp http.ResponseWriter, r *http.Request) *appError {
+	fsm, err := parseUploadHeaders(r)
+	if err == nil {
+		err = doUpdateBlocks(rsp, r, fsm)
+	}
+	if err != nil {
+		formatJSONError(rsp, err)
+	}
+	return err
+}
+
+func doUpdateBlocks(rsp http.ResponseWriter, r *http.Request, fsm *recvData) *appError {
+	if err := r.ParseMultipartForm(1 << 20); err != nil {
+		return &appError{nil, "", http.StatusBadRequest}
+	}
+	defer r.MultipartForm.RemoveAll()
+
+	target := normalizeUTF8Path(r.PostFormValue("target_file"))
+	size, err := strconv.ParseInt(r.PostFormValue("file_size"), 10, 64)
+	if target == "" || err != nil || size < 0 {
+		return &appError{nil, "No target file.\n", http.StatusBadRequest}
+	}
+	if !r.URL.Query().Has("commitonly") {
+		return &appError{nil, "Only commit supported.\n", http.StatusBadRequest}
+	}
+	parent := filepath.Dir(target)
+	if err := checkParentDir(fsm.repoID, parent); err != nil {
+		return err
+	}
+	blocks := r.PostFormValue("blockids")
+	if blocks == "" {
+		return &appError{nil, "No blockids.\n", http.StatusBadRequest}
+	}
+	var mtime int64
+	if t, err := time.Parse(time.RFC3339, r.PostFormValue("last_modify")); err == nil {
+		mtime = t.Unix()
+	}
+	fileID, errResponse := commitFileBlocks(fsm.repoID, parent, filepath.Base(target), blocks, fsm.user, size, true, mtime)
+	if errResponse != nil {
+		return errResponse
+	}
+	rsp.Header().Set("Content-Type", uploadJSON)
+	io.WriteString(rsp, fileID)
+	return nil
+}
+
 func doUploadBlks(rsp http.ResponseWriter, r *http.Request, fsm *recvData) *appError {
 	if err := r.ParseMultipartForm(1 << 20); err != nil {
 		return &appError{nil, "", http.StatusBadRequest}
@@ -3648,8 +3704,14 @@ func doUploadBlks(rsp http.ResponseWriter, r *http.Request, fsm *recvData) *appE
 	}
 
 	commitOnlyStr, ok := r.Form["commitonly"]
+	if repomgr.UsesSQLite() {
+		commitOnlyStr, ok = r.URL.Query()["commitonly"]
+	}
 	if !ok || len(commitOnlyStr) == 0 {
 		msg := "Only commit supported.\n"
+		if repomgr.UsesSQLite() {
+			msg = "Only commit suppported.\n"
+		}
 		return &appError{nil, msg, http.StatusBadRequest}
 	}
 
@@ -3668,6 +3730,9 @@ func doUploadBlks(rsp http.ResponseWriter, r *http.Request, fsm *recvData) *appE
 		return appErr
 	}
 	_, ok = r.Form["ret-json"]
+	if repomgr.UsesSQLite() {
+		ok = r.URL.Query().Has("ret-json")
+	}
 	if ok {
 		obj := make(map[string]interface{})
 		obj["id"] = fileID
@@ -3741,7 +3806,7 @@ func commitFileBlocks(repoID, parentDir, fileName, blockIDsJSON, user string, fi
 		return "", &appError{err, "", http.StatusInternalServerError}
 	}
 
-	fileID, appErr := indexExistedFileBlocks(repoID, repo.Version, blkIDs, fileSize)
+	fileID, appErr := indexExistedFileBlocks(repo.StoreID, repo.Version, blkIDs, fileSize)
 	if appErr != nil {
 		return "", appErr
 	}
@@ -3778,6 +3843,9 @@ func checkQuotaBeforeCommitBlocks(storeID string, blockIDs []string) *appError {
 	for _, blkID := range blockIDs {
 		size, err := blockmgr.Stat(storeID, blkID)
 		if err != nil {
+			if repomgr.UsesSQLite() && errors.Is(err, os.ErrNotExist) {
+				return &appError{nil, "Out of quota.\n", seafHTTPResNoQuota}
+			}
 			err := fmt.Errorf("failed to stat block %s in store %s: %v", blkID, storeID, err)
 			return &appError{err, "", http.StatusInternalServerError}
 		}

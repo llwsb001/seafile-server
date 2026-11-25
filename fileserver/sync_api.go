@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"database/sql"
@@ -458,6 +459,7 @@ func filterGroupRepos(repos []*share.SharedRepo) map[string]*share.SharedRepo {
 }
 
 func recvFSCB(rsp http.ResponseWriter, r *http.Request) *appError {
+	const headerSize = 44
 	vars := mux.Vars(r)
 	repoID := vars["repoid"]
 
@@ -480,37 +482,38 @@ func recvFSCB(rsp http.ResponseWriter, r *http.Request) *appError {
 	if err != nil {
 		return &appError{nil, err.Error(), http.StatusBadRequest}
 	}
+	usesSQLite := repomgr.UsesSQLite()
+	if usesSQLite && len(fsBuf) < headerSize {
+		return &appError{nil, "Request body size invalid", http.StatusBadRequest}
+	}
 
-	for len(fsBuf) > 44 {
+	for len(fsBuf) >= headerSize {
+		if len(fsBuf) == headerSize && !usesSQLite {
+			break
+		}
 		objID := string(fsBuf[:40])
 		if !utils.IsObjectIDValid(objID) {
 			msg := fmt.Sprintf("Fs obj id %s is invalid", objID)
 			return &appError{nil, msg, http.StatusBadRequest}
 		}
 
-		var objSize uint32
-		sizeBuffer := bytes.NewBuffer(fsBuf[40:44])
-		if err := binary.Read(sizeBuffer, binary.BigEndian, &objSize); err != nil {
-			msg := fmt.Sprintf("Failed to read fs obj size: %v", err)
-			return &appError{nil, msg, http.StatusBadRequest}
-		}
-
-		if len(fsBuf) < int(44+objSize) {
+		objSize := binary.BigEndian.Uint32(fsBuf[40:headerSize])
+		if uint64(objSize) > uint64(len(fsBuf)-headerSize) {
 			msg := "Request body size invalid"
 			return &appError{nil, msg, http.StatusBadRequest}
 		}
-
-		if exists, _ := fsmgr.Exists(storeID, objID); exists {
-			fsBuf = fsBuf[44+objSize:]
-			continue
+		if usesSQLite && objSize == 0 {
+			return &appError{nil, "", http.StatusInternalServerError}
 		}
 
-		objBuffer := bytes.NewBuffer(fsBuf[44 : 44+objSize])
-		if err := fsmgr.WriteRaw(storeID, objID, objBuffer); err != nil {
-			err := fmt.Errorf("Failed to write fs obj %s:%s : %v", storeID, objID, err)
-			return &appError{err, "", http.StatusInternalServerError}
+		end := headerSize + int(objSize)
+		if exists, _ := fsmgr.Exists(storeID, objID); !exists {
+			if err := fsmgr.WriteRaw(storeID, objID, bytes.NewReader(fsBuf[headerSize:end])); err != nil {
+				err := fmt.Errorf("Failed to write fs obj %s:%s : %v", storeID, objID, err)
+				return &appError{err, "", http.StatusInternalServerError}
+			}
 		}
-		fsBuf = fsBuf[44+objSize:]
+		fsBuf = fsBuf[end:]
 	}
 	if len(fsBuf) == 0 {
 		rsp.WriteHeader(http.StatusOK)
@@ -879,16 +882,29 @@ func putSendBlockCB(rsp http.ResponseWriter, r *http.Request) *appError {
 		return &appError{err, "", http.StatusInternalServerError}
 	}
 
+	var body io.Reader = r.Body
+	usesSQLite := repomgr.UsesSQLite()
+	if usesSQLite {
+		stream := bufio.NewReader(body)
+		if _, err := stream.Peek(1); err != nil {
+			return &appError{err, "", http.StatusBadRequest}
+		}
+		body = stream
+	}
 	if exists, err := blockmgr.Exists(storeID, blockID); err == nil && exists {
 		return nil
 	}
 
-	if err := blockmgr.Write(storeID, blockID, r.Body); err != nil {
+	if err := blockmgr.Write(storeID, blockID, body); err != nil {
 		err := fmt.Errorf("Failed to write block %.8s:%s: %v", storeID, blockID, err)
 		return &appError{err, "", http.StatusInternalServerError}
 	}
 
-	sendStatisticMsg(storeID, user, "sync-file-upload", uint64(r.ContentLength))
+	blockSize := r.ContentLength
+	if usesSQLite && blockSize < 0 {
+		blockSize, _ = blockmgr.Stat(storeID, blockID)
+	}
+	sendStatisticMsg(storeID, user, "sync-file-upload", uint64(blockSize))
 
 	return nil
 }
@@ -1108,8 +1124,9 @@ func putUpdateBranchCB(rsp http.ResponseWriter, r *http.Request) *appError {
 		return appErr
 	}
 
+	usesSQLite := repomgr.UsesSQLite()
 	appErr = checkPermission(repoID, user, "upload", false)
-	if appErr != nil && appErr.Code == http.StatusForbidden {
+	if appErr != nil && (usesSQLite || appErr.Code == http.StatusForbidden) {
 		return appErr
 	}
 
@@ -1125,8 +1142,14 @@ func putUpdateBranchCB(rsp http.ResponseWriter, r *http.Request) *appError {
 		return &appError{err, "", http.StatusInternalServerError}
 	}
 
+	if usesSQLite && !newCommit.ParentID.Valid {
+		return &appError{nil, "", http.StatusBadRequest}
+	}
 	base, err := commitmgr.Load(repoID, newCommit.ParentID.String)
 	if err != nil {
+		if usesSQLite {
+			return &appError{nil, "", http.StatusBadRequest}
+		}
 		err := fmt.Errorf("Failed to get commit %s for repo %s", newCommit.ParentID.String, repoID)
 		return &appError{err, "", http.StatusInternalServerError}
 	}
@@ -1148,6 +1171,11 @@ func putUpdateBranchCB(rsp http.ResponseWriter, r *http.Request) *appError {
 
 	if option.VerifyClientBlocks {
 		if body, err := checkBlocks(r.Context(), repo, base, newCommit); err != nil {
+			if usesSQLite {
+				rsp.WriteHeader(seafHTTPResBlockMissing)
+				io.WriteString(rsp, body)
+				return nil
+			}
 			return &appError{nil, body, seafHTTPResBlockMissing}
 		}
 	}
@@ -1197,6 +1225,9 @@ func checkBlocks(ctx context.Context, repo *repomgr.Repo, base, remote *commitmg
 
 	if len(aux.fileList) == 0 {
 		return "", nil
+	}
+	if repomgr.UsesSQLite() {
+		slices.Reverse(aux.fileList)
 	}
 
 	body, _ := json.Marshal(aux.fileList)

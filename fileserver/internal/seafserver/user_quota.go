@@ -36,6 +36,15 @@ func (q *UserQuota) get(ctx context.Context, user string) int64 {
 	return parseDefaultQuota(value)
 }
 
+// SQLiteDefaultQuotaOverride reads the management setting used by upload checks.
+func SQLiteDefaultQuotaOverride(ctx context.Context, db *sql.DB) (int64, bool) {
+	value, ok := databaseConfigValue(ctx, db, "quota", "default").string()
+	if !ok {
+		return 0, false
+	}
+	return parseDefaultQuota(value), true
+}
+
 func parseDefaultQuota(value string) int64 {
 	digits := strings.TrimLeft(value, decimalSpace)
 	digitEnd := 0

@@ -1,6 +1,6 @@
 # 阶段 4 第三批 · Web 文件访问令牌
 
-普通库分享写入已完成。下一批迁移 `seafile_web_get_access_token` 和 `seafile_web_query_access_token`，让现有 Python 客户端从 Go `seaf-server` 签发 Web 文件访问令牌，由现有 Go fileserver 通过同一个 Unix socket 查询。两个 RPC 在一个 PR 交付，保证一次性令牌的签发、过期和消费由同一个进程管理。 [C RPC 注册](../server/seaf-server.c#L584) · [Python 入口](../python/seaserv/api.py#L24) · [Go fileserver 消费入口](../fileserver/fileop.go#L2988)
+`seafile_web_get_access_token` 和 `seafile_web_query_access_token` 已合入。现有 Python 客户端从 Go `seaf-server` 签发 Web 文件访问令牌，由现有 Go fileserver 通过同一个 Unix socket 查询。同一进程负责一次性令牌的签发、过期和消费。下一批见 [SQLite 后续迁移计划](go-migration-sqlite-next.md)。 [服务端 PR #16](https://github.com/llwsb001/seafile-server/pull/16) · [v4 样本 PR #7](https://github.com/llwsb001/seafile-compat-tests/pull/7) · [C RPC 注册](../server/seaf-server.c#L584) · [Python 入口](../python/seaserv/api.py#L24) · [Go fileserver 消费入口](../fileserver/fileop.go#L2988)
 
 本批的目标部署是 Go 核心搭配现有 Go fileserver，验收两者的 Searpc 边界。C 内置 HTTP 的 ZIP 后台任务随 [HTTP 迁移](go-migration-plan.md#pr-顺序和验收条件) 处理，库同步令牌、JWT、解密密钥和配额按各自流程推进。 [C 令牌的 ZIP 分支](../server/web-accesstoken-mgr.c#L179)
 
@@ -32,7 +32,7 @@
 
 签发和查询都按步骤执行一次，尤其是一次性令牌查询。沿用 v3 的做法，在 Python 客户端发送请求时捕获同一份原始响应，再比较解码结果。C 基线采用 `fa46d4c43a9a23ff2f70acf92c14e6cb28955664`，两套实例使用独立运行目录。 [v3 单次调用回放](https://github.com/llwsb001/seafile-compat-tests/blob/110922607a826bce103203b8194e60bc6606a2cc/fixtures/v3/README.md)
 
-PR 1 交付以下验收入口。C 对 C 设 `SEAFILE_TARGET_IMPL=c`，C 对 Go 设 `SEAFILE_TARGET_IMPL=go` 并传入待测二进制。运行环境提供基线 `pysearpc` 和 C 动态库。
+`test-web-tokens` 提供 v4 验收入口。C 对 C 设 `SEAFILE_TARGET_IMPL=c`，C 对 Go 设 `SEAFILE_TARGET_IMPL=go` 并传入待测二进制。运行环境提供基线 `pysearpc` 和 C 动态库。
 
 ```sh
 make -C "$SEAFILE_COMPAT_TESTS" test-web-tokens \

@@ -22,8 +22,11 @@ type RPCError struct {
 // Handler receives the positional arguments of a Searpc function.
 type Handler func(context.Context, []json.RawMessage) (any, *RPCError)
 
+// NoReturn omits the ret field, as the C marshaller does for an invalid UTF-8 string.
+type NoReturn struct{}
+
 type response struct {
-	Return any `json:"ret"`
+	Return *any `json:"ret,omitempty"`
 	*RPCError
 }
 
@@ -107,5 +110,8 @@ func dispatch(ctx context.Context, service string, handlers map[string]Handler, 
 		return RPCError{Code: 500, Message: fmt.Sprintf("cannot find function %s.", method)}
 	}
 	result, rpcErr := handler(ctx, args[1:])
-	return response{Return: result, RPCError: rpcErr}
+	if _, absent := result.(NoReturn); absent {
+		return response{RPCError: rpcErr}
+	}
+	return response{Return: &result, RPCError: rpcErr}
 }

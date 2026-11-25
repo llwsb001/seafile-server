@@ -3,7 +3,6 @@ package seafserver
 import (
 	"context"
 	"database/sql"
-	"database/sql/driver"
 	"encoding/json"
 	"log"
 
@@ -17,16 +16,10 @@ type ShareWriter struct {
 
 // OpenShareWriter prepares the write pool. SQLite opens the file on the first write.
 func OpenShareWriter(dbPath string) (*ShareWriter, error) {
-	uri, err := sqliteFileURL(dbPath)
+	db, err := OpenSQLiteReadWrite(dbPath)
 	if err != nil {
 		return nil, err
 	}
-	uri.RawQuery = "mode=rw&_pragma=busy_timeout(250)"
-	db, err := sql.Open("sqlite", uri.String())
-	if err != nil {
-		return nil, err
-	}
-	db.SetMaxOpenConns(1)
 	return &ShareWriter{db: db}, nil
 }
 
@@ -69,44 +62,17 @@ func (s *ShareWriter) write(ctx context.Context, repoID string, failed *searpc.R
 }
 
 func (s *ShareWriter) exec(ctx context.Context, repoID, query string, args ...any) (bool, error) {
-	conn, err := s.db.Conn(ctx)
-	if err != nil {
-		return false, err
-	}
-	defer conn.Close()
-	// A late cancellation must not hide whether SQLite began or committed the transaction.
-	transaction := context.WithoutCancel(ctx)
-	if _, err := conn.ExecContext(transaction, "BEGIN IMMEDIATE"); err != nil {
-		return false, err
-	}
-	committed := false
-	defer func() {
-		if committed {
-			return
-		}
-		// A failed SQLite COMMIT can leave the transaction active.
-		if _, err := conn.ExecContext(transaction, "ROLLBACK"); err != nil {
-			conn.Raw(func(any) error { return driver.ErrBadConn })
-		}
-	}()
-	const scope = `
+	return withSQLiteWrite(ctx, s.db, func(conn *sql.Conn) (bool, error) {
+		const scope = `
 SELECT EXISTS (SELECT 1 FROM Repo WHERE repo_id = ?)
    AND NOT EXISTS (SELECT 1 FROM VirtualRepo WHERE repo_id = ?)`
-	var eligible bool
-	if err := conn.QueryRowContext(ctx, scope, repoID, repoID).Scan(&eligible); err != nil || !eligible {
-		return false, err
-	}
-	if _, err := conn.ExecContext(ctx, query, args...); err != nil {
-		return false, err
-	}
-	if err := ctx.Err(); err != nil {
-		return false, err
-	}
-	if _, err := conn.ExecContext(transaction, "COMMIT"); err != nil {
-		return false, err
-	}
-	committed = true
-	return true, nil
+		var eligible bool
+		if err := conn.QueryRowContext(ctx, scope, repoID, repoID).Scan(&eligible); err != nil || !eligible {
+			return false, err
+		}
+		_, err := conn.ExecContext(ctx, query, args...)
+		return err == nil, err
+	})
 }
 
 func (s *ShareWriter) addShare(ctx context.Context, args []json.RawMessage) (any, *searpc.RPCError) {

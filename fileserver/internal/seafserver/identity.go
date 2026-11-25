@@ -162,8 +162,9 @@ type groupMember struct {
 }
 
 func (s *Identity) groupMembers(ctx context.Context, groupID, start, limit int) ([]groupMember, error) {
+	// Match the C query so SQLite selects the same members before reversing the page.
 	query := `SELECT group_id, user_name, COALESCE(is_staff, 0) FROM GroupUser
-          WHERE group_id = ? ORDER BY user_name`
+          WHERE group_id = ?`
 	params := []any{groupID}
 	if limit != -1 {
 		query += " LIMIT ? OFFSET ?"

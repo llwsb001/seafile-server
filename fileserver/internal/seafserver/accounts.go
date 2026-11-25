@@ -190,6 +190,7 @@ func (a *Accounts) rename(ctx context.Context, args []json.RawMessage) (any, *se
 			"UPDATE core.RepoUserToken SET email = ? WHERE email = ?",
 			"UPDATE core.FolderUserPerm SET user = ? WHERE user = ?",
 			"UPDATE main.EmailUser SET email = ? WHERE email = ?",
+			"UPDATE main.UserRole SET email = ? WHERE email = ?",
 			"UPDATE core.UserQuota SET user = ? WHERE user = ?",
 		} {
 			if _, err := conn.ExecContext(ctx, query, *newEmail, *oldEmail); err != nil {

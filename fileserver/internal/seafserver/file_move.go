@@ -104,7 +104,7 @@ func (w *fileWriter) moveFiles(ctx context.Context, args []json.RawMessage) (any
 		return nil, rpcError(errBadArgs, "Invalid repo id")
 	}
 	if values[0] != values[3] {
-		return nil, rpcError(errBadArgs, "File RPC requires a move within one library")
+		return w.moveBetweenLibraries(ctx, values, *user, args)
 	}
 	replace := intArgument(args, 6) > 0
 	rpcErr = w.update(ctx, values[0], *user, values, func(t *fileTree, args []string) (string, *searpc.RPCError) {
@@ -168,7 +168,22 @@ func moveFilesWithinRepo(t *fileTree, args []string, replace bool) (string, *sea
 	if _, rpcErr := t.remove(from, removed); rpcErr != nil {
 		return "", rpcErr
 	}
-	rpcErr = t.change(to, true, func(dir *fsmgr.SeafDir) (bool, *searpc.RPCError) {
+	rpcErr = t.insertMoved(to, entries, replace)
+	if rpcErr != nil {
+		return "", rpcErr
+	}
+	name := removed[0]
+	if len(removed) > 1 {
+		return fmt.Sprintf("Moved \"%s\" and %d more files", name, len(removed)-1), nil
+	}
+	if fsmgr.IsDir(entries[0].Mode) {
+		return fmt.Sprintf("Moved directory \"%s\"", name), nil
+	}
+	return fmt.Sprintf("Moved \"%s\"", name), nil
+}
+
+func (t *fileTree) insertMoved(path []string, entries []*fsmgr.SeafDirent, replace bool) *searpc.RPCError {
+	return t.change(path, true, func(dir *fsmgr.SeafDir) (bool, *searpc.RPCError) {
 		for _, entry := range entries {
 			index := findEntry(dir.Entries, entry.Name)
 			if index != -1 {
@@ -185,15 +200,4 @@ func moveFilesWithinRepo(t *fileTree, args []string, replace bool) (string, *sea
 		}
 		return true, nil
 	})
-	if rpcErr != nil {
-		return "", rpcErr
-	}
-	name := removed[0]
-	if len(removed) > 1 {
-		return fmt.Sprintf("Moved \"%s\" and %d more files", name, len(removed)-1), nil
-	}
-	if fsmgr.IsDir(entries[0].Mode) {
-		return fmt.Sprintf("Moved directory \"%s\"", name), nil
-	}
-	return fmt.Sprintf("Moved \"%s\"", name), nil
 }

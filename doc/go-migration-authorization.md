@@ -1,6 +1,6 @@
 # 阶段 4 第一批 · 身份与库权限读取
 
-本批把 SQLite 只读服务扩展到用户、群组、组织成员关系和库权限查询。交付标志是现有 Python 客户端连接 Go 的 `seafile.sock`，对同一份 C 生成的数据得到一致的结论。后续的分享写入、令牌签发与核销、解密密钥、配额及事件继续按 [迁移总计划](go-migration-plan.md) 分批交付。
+本批把 SQLite 只读服务扩展到用户、群组、组织成员关系和库权限查询。v2 样本、身份 RPC 和权限 RPC 已合入，C 对 C 与 C 对 Go 各通过 66 个场景。下一批见 [普通库分享写入](go-migration-share-writes.md)。令牌、密钥、配额及事件见 [迁移总计划](go-migration-plan.md)。 [v2 样本 PR](https://github.com/llwsb001/seafile-compat-tests/pull/5) · [身份 RPC PR](https://github.com/llwsb001/seafile-server/pull/9) · [权限 RPC PR](https://github.com/llwsb001/seafile-server/pull/10)
 
 ## 起点
 
@@ -46,7 +46,7 @@ make -C "$SEAFILE_COMPAT_TESTS" test-api FIXTURES_DIR="$SEAFILE_FIXTURES_V1" SEA
 
 这里的两个 socket 都对应 v1 副本。`SEAFILE_SERVER_DIR` 指向服务端仓库，`SEAFILE_COMPAT_TESTS` 指向兼容仓库，Python 环境提供基线 `pysearpc`。
 
-批次 1 交付 `test-permissions` 后，用下面的入口按 v2 场景组对拍。`SCENARIO_SET` 对应 v2 清单里的组名，两个 socket 必须指向该组指定的独立副本。验收报告列出快照、配置、执行的用例数和差异。
+用 `test-permissions` 按 v2 场景组对拍。`SCENARIO_SET` 对应 v2 清单里的组名，两个 socket 必须指向该组指定的独立副本。验收报告列出快照、配置、执行的用例数和差异。
 
 ```sh
 make -C "$SEAFILE_COMPAT_TESTS" test-permissions \

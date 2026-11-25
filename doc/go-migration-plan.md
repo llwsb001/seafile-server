@@ -34,7 +34,7 @@ make -C "$SEAFILE_COMPAT_TESTS" test-data IMPL=c-baseline FIXTURES_DIR="$SEAFILE
 | 1 | 在兼容仓库固化 v1 验收入口和归档摘要。把 `make test-data` 接入独立校验，给后续生产读路径留出真实执行入口。 | 完整样本检查到 113 个对象。缺少或改动归档时返回失败。目标执行失败可传递给 CI。 |
 | 2 | 在现有 Go 模块中复用 `commitmgr`、`fsmgr`、`blockmgr` 和 `objstore`。接通 `Branch → commit → FS → block`，用数据版本和库归属选择读路径。 | 从 v1 SQLite 找到普通库、虚拟库和加密库的 head。目录和文件结果与基线一致，校验空文件、空目录、历史提交、多块文件和源库对象。现有 `fileserver` 的调用方通过回归。 |
 | 3 | 实现 Go Searpc 服务端和 `seaf-server` 命令，先迁 `seafile_get_repo`、`seafile_get_commit`、`seafile_list_dir_by_path` 和 `seafile_get_file_id_by_path`。 | 用现有 Python 客户端分别连接 C、Go 的 `seafile.sock`。比较成功、缺失及非法参数的响应，包含字段、`null`、列表排序、整数精度和错误码。测试覆盖连接复用。 |
-| 4 | 分批迁用户、群组、组织、分享、权限、配额、下载令牌、解密密钥与事件。第一批见 [身份与库权限读取](go-migration-authorization.md)。签发和核销一次性令牌同批交付。 | 现有 RPC 回归通过。覆盖权限允许和拒绝、令牌过期与核销、持久化设置、缓存及通知事件。配置和环境变量的解析与优先级符合 C 基线。 |
+| 4 | 分批迁用户、群组、组织、分享、权限、配额、下载令牌、解密密钥与事件。已合入 [身份与库权限读取](go-migration-authorization.md)，下一批为 [普通库分享写入](go-migration-share-writes.md)。签发和核销一次性令牌同批交付。 | 现有 RPC 回归通过。覆盖权限允许和拒绝、令牌过期与核销、持久化设置、缓存及通知事件。配置和环境变量的解析与优先级符合 C 基线。 |
 | 5 | 迁仓库和文件写入、回滚、回收站、历史、固定分块、CDC、加密、并发合并和后台任务。 | 落盘对象后按旧 head 条件更新 `Branch`。对拍并发、重试和中断后的对象与数据库状态，验证 `GCID`、`LastGCID` 及虚拟库合并。新样本覆盖冲突提交的第二父提交、支持的加密版本和旧对象版本。 |
 | 6 | 用现有 Go `fileserver` 接替 C HTTP。补齐 SQLite 接入，核对 C 和 Go 路由、同步接口、上传、下载和 ZIP。 | MySQL、SQLite 都通过 HTTP 测试和真实桌面客户端的双端同步。检查 `/update-blks-api`、上传进度、Range、文件名编码、大文件、配额和错误响应。 |
 | 7 | 迁 `seafserv-gc`、`seaf-fsck`、`seafile-controller` 和可选 FUSE。 | GC 和 fsck 先跑校验、导出及 dry-run，在隔离副本验证修复和删除。核对候选对象、可达对象和修复后的 head。验证 controller 启停与重启，以及 FUSE 挂载、列目录和文件读取。 |

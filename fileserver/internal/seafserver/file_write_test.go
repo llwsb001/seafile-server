@@ -2,6 +2,7 @@ package seafserver
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -10,26 +11,7 @@ import (
 
 func TestFileWriteRequiresGrantAndWritableRepository(t *testing.T) {
 	ctx := context.Background()
-	dir := t.TempDir()
-	path := filepath.Join(dir, "seafile.db")
-	file, err := os.Create(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	file.Close()
-	db, err := OpenSQLiteReadWrite(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-	schema, err := os.ReadFile("../../../scripts/sql/sqlite/seafile.sql")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.Exec(string(schema)); err != nil {
-		t.Fatal(err)
-	}
-
+	db, dir := openFileWriteFixture(t)
 	reader := NewReader(db, dir)
 	args := fileWriteRPCArgs(t, "fixture", "file writes", "owner@example.test")
 	result, rpcErr := reader.createRepo(ctx, db, args)
@@ -46,7 +28,9 @@ func TestFileWriteRequiresGrantAndWritableRepository(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	post := reader.FileWriteRPCHandlers(db, nil, false)["seafile_post_empty_file"]
+	handlers, closeMoves := reader.FileWriteRPCHandlers(ctx, db, nil, false, nil, FileMoveLimits{})
+	defer closeMoves()
+	post := handlers["seafile_post_empty_file"]
 	if _, rpcErr := post(ctx, fileWriteRPCArgs(t, repoID, "/", "denied.txt", "reader@example.test")); rpcErr == nil || rpcErr.Code != errRepoAuth {
 		t.Fatalf("reader's write resulted in %v", rpcErr)
 	}
@@ -63,6 +47,31 @@ func TestFileWriteRequiresGrantAndWritableRepository(t *testing.T) {
 	if current.HeadCommitID != repo.HeadCommitID {
 		t.Fatal("denied writes changed the repository head")
 	}
+}
+
+func openFileWriteFixture(t *testing.T) (*sql.DB, string) {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "seafile.db")
+	file, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	file.Close()
+	db, err := OpenSQLiteReadWrite(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	schema, err := os.ReadFile("../../../scripts/sql/sqlite/seafile.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(string(schema)); err != nil {
+		t.Fatal(err)
+	}
+
+	return db, dir
 }
 
 func fileWriteRPCArgs(t *testing.T, words ...string) []json.RawMessage {

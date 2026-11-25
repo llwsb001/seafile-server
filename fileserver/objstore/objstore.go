@@ -50,6 +50,16 @@ func (s *ObjectStore) Write(repoID string, objID string, r io.Reader, sync bool)
 	return s.backend.write(repoID, objID, r, sync)
 }
 
+// Copy streams one immutable object into another library's storage namespace.
+func (s *ObjectStore) Copy(srcRepo, dstRepo, objID string) error {
+	reader, writer := io.Pipe()
+	defer reader.Close()
+	go func() {
+		writer.CloseWithError(s.Read(srcRepo, objID, writer))
+	}()
+	return s.Write(dstRepo, objID, reader, true)
+}
+
 // Check whether object exists.
 func (s *ObjectStore) Exists(repoID string, objID string) (res bool, err error) {
 	return s.backend.exists(repoID, objID)

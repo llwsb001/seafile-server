@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"maps"
+	"math"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -127,7 +128,15 @@ func run(ctx context.Context, args []string) error {
 		maps.Copy(handlers, reader.RepoCreationRPCHandlers(writer))
 		maps.Copy(handlers, reader.DirectoryShareRPCHandlers(writer))
 		if identity != nil {
-			maps.Copy(handlers, reader.FileWriteRPCHandlers(writer, identity, cloudMode))
+			copyConfig := config.Section("web_copy")
+			maxMiB := copyConfig.Key("max_size").MustInt64(0)
+			limits := seafserver.FileMoveLimits{
+				MaxFiles: copyConfig.Key("max_files").MustInt64(0),
+				MaxBytes: min(max(0, maxMiB), math.MaxInt64>>20) << 20,
+			}
+			fileHandlers, closeMoves := reader.FileWriteRPCHandlers(ctx, writer, identity, cloudMode, quota, limits)
+			defer closeMoves()
+			maps.Copy(handlers, fileHandlers)
 			groupManagement, err := seafserver.OpenGroupManagement(ccnetDir, writer)
 			if err != nil {
 				return err

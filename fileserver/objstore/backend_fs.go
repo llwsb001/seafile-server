@@ -60,6 +60,8 @@ func (b *fsBackend) write(repoID string, objID string, r io.Reader, sync bool) e
 	tmpDir := b.tmpDir
 	if b.objType != "blocks" {
 		tmpDir = parentDir
+	} else if err := os.MkdirAll(tmpDir, os.ModePerm); err != nil {
+		return err
 	}
 	tFile, err := os.CreateTemp(tmpDir, objID+".*")
 	if err != nil {

@@ -68,7 +68,9 @@ func RecoverWrapper(f func()) {
 func (client *Client) HandleMessages() {
 	// Set keep alive.
 	client.conn.SetPongHandler(func(string) error {
+		client.connMutex.Lock()
 		client.Alive = time.Now()
+		client.connMutex.Unlock()
 		return nil
 	})
 
@@ -174,9 +176,8 @@ func (client *Client) handleMessage(msg *Message) error {
 
 // subscribe subscribes to notifications of repos.
 func (client *Client) subscribe(repoID, user string, exp int64) {
-	client.User = user
-
 	client.ReposMutex.Lock()
+	client.User = user
 	client.Repos[repoID] = exp
 	client.ReposMutex.Unlock()
 
@@ -191,6 +192,12 @@ func (client *Client) subscribe(repoID, user string, exp int64) {
 	subscribers.Mutex.Lock()
 	subscribers.Clients[client.ID] = client
 	subscribers.Mutex.Unlock()
+}
+
+func (client *Client) username() string {
+	client.ReposMutex.Lock()
+	defer client.ReposMutex.Unlock()
+	return client.User
 }
 
 func (client *Client) unsubscribe(repoID string) {
@@ -220,8 +227,8 @@ func (client *Client) writeMessages() {
 	for {
 		select {
 		case msg := <-client.WCh:
-			client.conn.SetWriteDeadline(time.Now().Add(writeWait))
 			client.connMutex.Lock()
+			client.conn.SetWriteDeadline(time.Now().Add(writeWait))
 			err := client.conn.WriteJSON(msg)
 			client.connMutex.Unlock()
 			if err != nil {
@@ -230,7 +237,7 @@ func (client *Client) writeMessages() {
 				return
 			}
 			m, _ := msg.(*Message)
-			log.Debugf("send %s event to client %s(%d): %s", m.Type, client.User, client.ID, string(m.Content))
+			log.Debugf("send %s event to client %s(%d): %s", m.Type, client.username(), client.ID, string(m.Content))
 		case <-client.ConnCloser.HasBeenClosed():
 			return
 		}
@@ -246,13 +253,14 @@ func (client *Client) keepAlive() {
 	for {
 		select {
 		case <-ticker.C:
+			client.connMutex.Lock()
 			if time.Since(client.Alive) > pongWait {
+				client.connMutex.Unlock()
 				client.ConnCloser.Signal()
 				log.Debugf("disconnected because no pong was received for more than %v", pongWait)
 				return
 			}
 			client.conn.SetWriteDeadline(time.Now().Add(writeWait))
-			client.connMutex.Lock()
 			err := client.conn.WriteMessage(websocket.PingMessage, nil)
 			client.connMutex.Unlock()
 			if err != nil {

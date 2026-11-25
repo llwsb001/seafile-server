@@ -83,6 +83,7 @@ port=8082
         seafile_conf = join(self.central_conf_dir, 'seafile.conf')
         seafile_db_conf = '''\
 [database]
+type = sqlite
 '''
         with open(seafile_conf, 'a+') as fp:
             fp.write('\n')

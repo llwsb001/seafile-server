@@ -35,6 +35,9 @@ PYTHONPATH=$PWD:$PYTHONPATH LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH \
 
 注意 `py.test` 解析到 `/usr/local/bin/py.test`（python3.10），所以 `requests_toolbelt`、`tenacity` 要装进 3.10；`sqlite3` CLI 必须在 PATH 里，否则建库阶段静默失败（现象是 ccnet 没有 socket、RPC 全超时）。
 
-## 待解
+## 已解：sqlite 模式下 serverctl 的两个坑
 
-- 首轮测试 117 个 error，全部是 pysearpc 找不到 `seafserv-threaded-rpcserver` socket，正在定位（ccnet-server 是否正常起来 / conf 目录是否被 serverctl 覆盖）。
+1. `add_seafile_sqlite_db_conf()` 只写了空的 `[database]`，C 端读不到 `type`，seaf-server 启动即失败（`seafile-session.c:153` 后报 `Failed to create seafile session`）。补上 `type = sqlite` 后正常。
+2. `sqlite3` CLI 不在 PATH 时，建库静默失败，现象是 socket 不存在、全部 RPC 超时。
+
+修正后：**117 passed / 0 failed，耗时 234s**（`c_fileserver` + sqlite）。

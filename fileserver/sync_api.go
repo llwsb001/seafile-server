@@ -713,24 +713,36 @@ func getCheckQuotaCB(rsp http.ResponseWriter, r *http.Request) *appError {
 
 	queries := r.URL.Query()
 	delta := queries.Get("delta")
+	sqliteDB := repomgr.UsesSQLite()
+	invalidDelta := "Invalid delta parameter"
+	if sqliteDB {
+		invalidDelta += "."
+	}
 	if delta == "" {
-		msg := "Invalid delta parameter"
-		return &appError{nil, msg, http.StatusBadRequest}
+		return &appError{nil, invalidDelta, http.StatusBadRequest}
 	}
 
 	deltaNum, err := strconv.ParseInt(delta, 10, 64)
 	if err != nil {
-		msg := "Invalid delta parameter"
-		return &appError{nil, msg, http.StatusBadRequest}
+		return &appError{nil, invalidDelta, http.StatusBadRequest}
 	}
 
 	ret, err := checkQuota(repoID, deltaNum)
 	if err != nil {
+		if sqliteDB {
+			log.Warnf("failed to check quota: %v", err)
+			rsp.WriteHeader(http.StatusInternalServerError)
+			return nil
+		}
 		msg := "Internal error.\n"
 		err := fmt.Errorf("failed to check quota: %v", err)
 		return &appError{err, msg, http.StatusInternalServerError}
 	}
 	if ret == 1 {
+		if sqliteDB {
+			rsp.WriteHeader(seafHTTPResNoQuota)
+			return nil
+		}
 		msg := "Out of quota.\n"
 		return &appError{nil, msg, seafHTTPResNoQuota}
 	}

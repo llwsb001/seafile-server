@@ -2,6 +2,7 @@ package option
 
 import (
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -150,7 +151,11 @@ func LoadFileServerOptions(centralDir string) {
 	if section, err := config.GetSection("quota"); err == nil {
 		if key, err := section.GetKey("default"); err == nil {
 			quotaStr := key.String()
-			DefaultQuota = parseQuota(quotaStr)
+			if strings.EqualFold(config.Section("database").Key("type").String(), "sqlite") {
+				DefaultQuota = ParseSQLiteDefaultQuota(quotaStr)
+			} else {
+				DefaultQuota = parseQuota(quotaStr)
+			}
 		}
 	}
 
@@ -287,6 +292,40 @@ func parseQuota(quotaStr string) int64 {
 	}
 
 	return quota
+}
+
+// ParseSQLiteDefaultQuota uses the units accepted by the C SQLite server.
+func ParseSQLiteDefaultQuota(value string) int64 {
+	digits := strings.TrimLeft(value, " \t\r\n\f\v")
+	digitEnd := 0
+	if len(digits) > 0 && (digits[0] == '-' || digits[0] == '+') {
+		digitEnd++
+	}
+	digitStart := digitEnd
+	for digitEnd < len(digits) && digits[digitEnd] >= '0' && digits[digitEnd] <= '9' {
+		digitEnd++
+	}
+	quota, suffix := int64(0), value
+	if digitEnd > digitStart {
+		var err error
+		quota, err = strconv.ParseInt(digits[:digitEnd], 10, 64)
+		if err != nil || quota == math.MinInt64 || quota == math.MaxInt64 {
+			return InfiniteQuota
+		}
+		suffix = digits[digitEnd:]
+	}
+	switch strings.ToLower(suffix) {
+	case "k", "kb":
+		return quota * KB
+	case "m", "mb":
+		return quota * MB
+	case "", "g", "gb":
+		return quota * GB
+	case "t", "tb":
+		return quota * TB
+	default:
+		return InfiniteQuota
+	}
 }
 
 func loadCacheOptionFromEnv() {

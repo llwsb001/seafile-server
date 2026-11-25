@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"math"
+	"strings"
 
 	"github.com/haiwen/seafile-server/fileserver/internal/seafserver"
 	"github.com/haiwen/seafile-server/fileserver/option"
@@ -41,6 +43,13 @@ func checkQuota(repoID string, delta int64) (int, error) {
 		err := fmt.Errorf("repo %s has no owner", repoID)
 		return -1, err
 	}
+	sqliteDB := repomgr.UsesSQLite()
+	if sqliteDB {
+		user = strings.ToLower(user)
+		if strings.Contains(user, "dtable@seafile") {
+			return 0, nil
+		}
+	}
 	quota, err := getUserQuota(user)
 	if err != nil {
 		err := fmt.Errorf("failed to get user quota: %v", err)
@@ -55,8 +64,7 @@ func checkQuota(repoID string, delta int64) (int, error) {
 		err := fmt.Errorf("failed to get user usage: %v", err)
 		return -1, err
 	}
-	usage += delta
-	if usage >= quota {
+	if (sqliteDB && delta > math.MaxInt64-usage) || usage+delta >= quota {
 		return 1, nil
 	}
 

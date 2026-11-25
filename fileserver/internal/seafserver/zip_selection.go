@@ -28,6 +28,7 @@ var errZIPSize = errors.New("zip size limit exceeded")
 
 type zipInput struct {
 	ObjectID string   `json:"obj_id"`
+	DirPath  string   `json:"dir"`
 	DirName  string   `json:"dir_name"`
 	Parent   string   `json:"parent_dir"`
 	Files    []string `json:"file_list"`
@@ -52,8 +53,15 @@ func (m *ZipDownloads) selection(ctx context.Context, access webAccess) (zipSele
 	parseErr := json.Unmarshal([]byte(access.ObjectID), &input)
 	result.windows = input.Windows != 0
 	if access.Op == "download-dir" || access.Op == "download-dir-link" {
-		if parseErr != nil || !ziparchive.ValidName(input.DirName) || input.ObjectID == "" {
+		if parseErr != nil || !ziparchive.ValidName(input.DirName) || (input.ObjectID == "" && input.DirPath == "") {
 			return zipSelection{}, rpcError(errWebAccessToken, "Failed to parse download dir data.")
+		}
+		if input.ObjectID == "" {
+			dir, rpcErr := m.reader.directoryByPath(repo, repo.RootID, input.DirPath)
+			if rpcErr != nil {
+				return zipSelection{}, rpcError(errWebAccessToken, "Dir doesn't exist.")
+			}
+			input.ObjectID = dir.DirID
 		}
 		if _, err := m.reader.Directory(repo, input.ObjectID); err != nil {
 			return zipSelection{}, rpcError(errWebAccessToken, "Dir doesn't exist.")

@@ -129,6 +129,7 @@ func run(ctx context.Context, args []string) error {
 		maps.Copy(handlers, reader.SyncTokenRPCHandlers(writer))
 		maps.Copy(handlers, reader.RepoCreationRPCHandlers(writer))
 		maps.Copy(handlers, reader.DirectoryShareRPCHandlers(writer))
+		handlers["seafile_get_upload_tmp_file_offset"] = seafserver.UploadOffsetRPC(writer)
 		if identity != nil {
 			copyConfig := config.Section("web_copy")
 			maxMiB := copyConfig.Key("max_size").MustInt64(0)

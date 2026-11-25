@@ -524,7 +524,21 @@ out:
 static gboolean
 go_process_running (int pid)
 {
-    return pid > 0 && (kill ((pid_t)pid, 0) == 0 || errno == EPERM);
+    if (pid <= 0)
+        return FALSE;
+
+    pid_t result;
+    do {
+        result = waitpid ((pid_t)pid, NULL, WNOHANG);
+    } while (result < 0 && errno == EINTR);
+    return result == 0;
+}
+
+static void
+reap_children (void)
+{
+    while (waitpid (-1, NULL, WNOHANG) > 0) {
+    }
 }
 
 static int
@@ -543,6 +557,8 @@ wait_for_go_process (int which, int pid, const char *name)
 static void
 stop_go_process (int which, int *pid)
 {
+    /* Go children are reaped only on this thread. An exited child keeps its
+     * PID between the ownership check and a subsequent signal. */
     if (go_process_running (*pid)) {
         kill ((pid_t)*pid, SIGTERM);
         gint64 deadline = g_get_monotonic_time () + 6 * G_TIME_SPAN_SECOND;
@@ -584,6 +600,7 @@ static gboolean
 check_process (void *data)
 {
     if (enabled_go_core) {
+        reap_children ();
         start_go_services ();
     } else {
         if (need_restart(PID_SERVER)) {
@@ -776,8 +793,7 @@ static void
 sigchld_handler (int signo)
 {
     int saved_errno = errno;
-    while (waitpid (-1, NULL, WNOHANG) > 0) {
-    }
+    reap_children ();
     errno = saved_errno;
 }
 
@@ -799,13 +815,14 @@ static void
 set_signal_handlers (void)
 {
     if (enabled_go_core) {
+        signal (SIGCHLD, SIG_DFL);
         g_unix_signal_add (SIGINT, shutdown_go_services, NULL);
         g_unix_signal_add (SIGTERM, shutdown_go_services, NULL);
     } else {
         signal (SIGINT, sigint_handler);
         signal (SIGTERM, sigint_handler);
+        signal (SIGCHLD, sigchld_handler);
     }
-    signal (SIGCHLD, sigchld_handler);
     signal (SIGUSR1, sigusr1_handler);
     signal (SIGPIPE, SIG_IGN);
 }

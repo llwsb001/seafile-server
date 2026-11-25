@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -27,8 +28,13 @@ var mergeVirtualRepoPool *workerpool.WorkPool
 var runningRepo = make(map[string]struct{})
 var runningRepoMutex sync.Mutex
 
-func virtualRepoInit() {
+func virtualRepoInit() func() {
 	mergeVirtualRepoPool = workerpool.CreateWorkerPool(mergeVirtualRepo, mergeVirtualRepoWorkerNumber)
+	ctx, cancel := context.WithCancel(context.Background())
+	if repomgr.UsesSQLite() {
+		go runRPCFileWrites(ctx)
+	}
+	return cancel
 }
 
 func mergeVirtualRepo(args ...interface{}) error {
@@ -36,66 +42,56 @@ func mergeVirtualRepo(args ...interface{}) error {
 		return nil
 	}
 	repoID := args[0].(string)
+	excludeRepo := ""
+	if len(args) > 1 {
+		excludeRepo = args[1].(string)
+	}
+	return mergeVirtualFamily(repoID, excludeRepo)
+}
+
+func mergeVirtualFamily(repoID, excludeRepo string) error {
 	virtual, err := repomgr.IsVirtualRepo(repoID)
 	if err != nil {
 		return err
 	}
 
 	if virtual {
-		runningRepoMutex.Lock()
-		if _, ok := runningRepo[repoID]; ok {
-			log.Debugf("a task for repo %s is already running", repoID)
-			go mergeVirtualRepoPool.AddTask(repoID)
-			runningRepoMutex.Unlock()
-			return nil
-		}
-		runningRepo[repoID] = struct{}{}
-		runningRepoMutex.Unlock()
-
-		err := mergeRepo(repoID)
-		if err != nil {
-			log.Errorf("%v", err)
-		}
-		runningRepoMutex.Lock()
-		delete(runningRepo, repoID)
-		runningRepoMutex.Unlock()
-
+		err := mergeVirtualView(repoID)
 		go updateSizePool.AddTask(repoID)
-
-		return nil
+		return err
 	}
 
-	excludeRepo := ""
-	if len(args) > 1 {
-		excludeRepo = args[1].(string)
+	vRepos, err := repomgr.GetVirtualRepoIDsByOrigin(repoID)
+	if err != nil {
+		return err
 	}
-	vRepos, _ := repomgr.GetVirtualRepoIDsByOrigin(repoID)
+	var failed error
 	for _, id := range vRepos {
 		if id == excludeRepo {
 			continue
 		}
-		runningRepoMutex.Lock()
-		if _, ok := runningRepo[id]; ok {
-			log.Debugf("a task for repo %s is already running", id)
-			go mergeVirtualRepoPool.AddTask(id)
-			runningRepoMutex.Unlock()
-			continue
-		}
-		runningRepo[id] = struct{}{}
-		runningRepoMutex.Unlock()
-
-		err := mergeRepo(id)
-		if err != nil {
-			log.Errorf("%v", err)
-		}
-		runningRepoMutex.Lock()
-		delete(runningRepo, id)
-		runningRepoMutex.Unlock()
+		failed = errors.Join(failed, mergeVirtualView(id))
 	}
 
 	go updateSizePool.AddTask(repoID)
+	return failed
+}
 
-	return nil
+func mergeVirtualView(repoID string) error {
+	runningRepoMutex.Lock()
+	if _, ok := runningRepo[repoID]; ok {
+		runningRepoMutex.Unlock()
+		go mergeVirtualRepoPool.AddTask(repoID)
+		return fmt.Errorf("virtual merge for %s is already running", repoID)
+	}
+	runningRepo[repoID] = struct{}{}
+	runningRepoMutex.Unlock()
+	defer func() {
+		runningRepoMutex.Lock()
+		delete(runningRepo, repoID)
+		runningRepoMutex.Unlock()
+	}()
+	return mergeRepo(repoID)
 }
 
 func mergeRepo(repoID string) error {
@@ -132,13 +128,15 @@ func mergeRepo(repoID string) error {
 		return err
 	}
 	if origRoot == "" {
-		newPath, _ := handleMissingVirtualRepo(origRepo, origHead, vInfo)
-		if newPath != "" {
-			origRoot, _ = fsmgr.GetSeafdirIDByPath(origRepo.StoreID, origHead.RootID, newPath)
+		newPath, err := handleMissingVirtualRepo(origRepo, origHead, vInfo)
+		if err != nil || newPath == "" {
+			return err
 		}
-		if origRoot == "" {
-			return nil
+		origRoot, err = fsmgr.GetSeafdirIDByPath(origRepo.StoreID, origHead.RootID, newPath)
+		if err != nil {
+			return err
 		}
+		vInfo.Path, vInfo.BaseCommitID = newPath, origHead.CommitID
 	}
 
 	base, err := commitmgr.Load(origRepo.ID, vInfo.BaseCommitID)
@@ -155,20 +153,25 @@ func mergeRepo(repoID string) error {
 	}
 
 	if root == origRoot {
+		if repomgr.UsesSQLite() && vInfo.BaseCommitID != origHead.CommitID {
+			return repomgr.SetVirtualRepoBaseCommitPath(repo.ID, origHead.CommitID, vInfo.Path)
+		}
 	} else if baseRoot == root {
 		_, err := updateDir(repoID, "/", origRoot, origHead.CreatorName, head.CommitID)
 		if err != nil {
 			err := fmt.Errorf("failed to update root of virtual repo %.10s", repoID)
 			return err
 		}
-		repomgr.SetVirtualRepoBaseCommitPath(repo.ID, origRepo.HeadCommitID, vInfo.Path)
+		return repomgr.SetVirtualRepoBaseCommitPath(repo.ID, origRepo.HeadCommitID, vInfo.Path)
 	} else if baseRoot == origRoot {
 		newBaseCommit, err := updateDir(vInfo.OriginRepoID, vInfo.Path, root, head.CreatorName, origHead.CommitID)
 		if err != nil {
 			err := fmt.Errorf("merge repo %.8s failed: failed to update origin repo%.10s path %s", repoID, vInfo.OriginRepoID, vInfo.Path)
 			return err
 		}
-		repomgr.SetVirtualRepoBaseCommitPath(repo.ID, newBaseCommit, vInfo.Path)
+		if err := repomgr.SetVirtualRepoBaseCommitPath(repo.ID, newBaseCommit, vInfo.Path); err != nil {
+			return err
+		}
 		cleanupVirtualRepos(vInfo.OriginRepoID)
 		mergeVirtualRepo(vInfo.OriginRepoID, repoID)
 	} else {
@@ -194,7 +197,9 @@ func mergeRepo(repoID string) error {
 			err := fmt.Errorf("merge repo %.10s failed: failed to update origin repo %.10s path %s", repoID, vInfo.OriginRepoID, vInfo.Path)
 			return err
 		}
-		repomgr.SetVirtualRepoBaseCommitPath(repo.ID, newBaseCommit, vInfo.Path)
+		if err := repomgr.SetVirtualRepoBaseCommitPath(repo.ID, newBaseCommit, vInfo.Path); err != nil {
+			return err
+		}
 		cleanupVirtualRepos(vInfo.OriginRepoID)
 		mergeVirtualRepo(vInfo.OriginRepoID, repoID)
 	}
@@ -254,9 +259,8 @@ func handleMissingVirtualRepo(repo *repomgr.Repo, head *commitmgr.Commit, vInfo 
 		var newPath string
 		oldDirID, err := fsmgr.GetSeafdirIDByPath(repo.StoreID, parent.RootID, parPath)
 		if err != nil || oldDirID == "" {
-
-			if err == fsmgr.ErrPathNoExist {
-				repomgr.DelVirtualRepo(vInfo.RepoID, option.CloudMode)
+			if errors.Is(err, fsmgr.ErrPathNoExist) {
+				return "", deleteMissingVirtualRepo(vInfo)
 			}
 			err := fmt.Errorf("failed to find %s under commit %s in repo %s", parPath, parent.CommitID, repo.StoreID)
 			return "", err
@@ -270,7 +274,9 @@ func handleMissingVirtualRepo(repo *repomgr.Repo, head *commitmgr.Commit, vInfo 
 					} else {
 						newPath = filepath.Join("/", de.NewName)
 					}
-					repomgr.SetVirtualRepoBaseCommitPath(vInfo.RepoID, head.CommitID, newPath)
+					if err := repomgr.SetVirtualRepoBaseCommitPath(vInfo.RepoID, head.CommitID, newPath); err != nil {
+						return "", err
+					}
 					returnPath = newPath
 					if subPath == "" {
 						newName := filepath.Base(newPath)
@@ -298,10 +304,19 @@ func handleMissingVirtualRepo(repo *repomgr.Repo, head *commitmgr.Commit, vInfo 
 	}
 
 	if !isRenamed {
-		repomgr.DelVirtualRepo(vInfo.RepoID, option.CloudMode)
+		return "", deleteMissingVirtualRepo(vInfo)
 	}
 
 	return returnPath, nil
+}
+
+func deleteMissingVirtualRepo(info *repomgr.VRepoInfo) error {
+	if !repomgr.UsesSQLite() {
+		return repomgr.DelVirtualRepo(info.RepoID, option.CloudMode)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), option.DBOpTimeout)
+	defer cancel()
+	return seafserver.DeleteSQLiteVirtualRepo(ctx, seafileDB, info, option.CloudMode)
 }
 
 func editRepo(repoID, name, desc, user string) error {

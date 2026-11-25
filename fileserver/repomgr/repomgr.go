@@ -578,14 +578,12 @@ func GetVirtualRepoIDsByOrigin(repoID string) ([]string, error) {
 	defer row.Close()
 	for row.Next() {
 		if err := row.Scan(&id); err != nil {
-			if err != sql.ErrNoRows {
-				return nil, err
-			}
+			return nil, err
 		}
 		ids = append(ids, id)
 	}
 
-	return ids, nil
+	return ids, row.Err()
 }
 
 // DelVirtualRepo deletes virtual repo from database.

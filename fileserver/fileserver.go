@@ -387,6 +387,10 @@ type appHandler func(http.ResponseWriter, *http.Request) *appError
 
 func (fn appHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if e := fn(w, r); e != nil {
+		if e.Error == errSQLiteSyncAuth {
+			w.WriteHeader(e.Code)
+			return
+		}
 		if e.Error != nil && e.Code == http.StatusInternalServerError {
 			log.Errorf("path %s internal server error: %v\n", r.URL.Path, e.Error)
 		}

@@ -192,8 +192,8 @@ func runSyncTokenConsumer(t *testing.T, path string) {
 		req.Header.Set("Seafile-Repo-Token", token)
 		response := httptest.NewRecorder()
 		router.ServeHTTP(response, req)
-		if _, cached := tokenCache.Load(token); cached != (response.Code == http.StatusOK) {
-			t.Fatal("sync endpoint did not warm or clear the existing token cache")
+		if _, cached := tokenCache.Load(token); cached {
+			t.Fatal("SQLite sync endpoint cached a token that can be revoked by the core")
 		}
 		fmt.Println(response.Code)
 	}

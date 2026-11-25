@@ -144,7 +144,7 @@ func getFsId(args ...interface{}) error {
 		resChan <- &calResult{user, appErr}
 		return nil
 	}
-	appErr = checkPermission(repoID, user, "download", false)
+	appErr = checkPermission(r.Context(), repoID, user, "download", false)
 	if appErr != nil {
 		resChan <- &calResult{user, appErr}
 		return nil
@@ -237,7 +237,7 @@ func permissionCheckCB(rsp http.ResponseWriter, r *http.Request) *appError {
 	if err != nil {
 		return err
 	}
-	err = checkPermission(repoID, user, op, true)
+	err = checkPermission(r.Context(), repoID, user, op, true)
 	if err != nil {
 		return err
 	}
@@ -281,7 +281,7 @@ func getBlockMapCB(rsp http.ResponseWriter, r *http.Request) *appError {
 	if appErr != nil {
 		return appErr
 	}
-	appErr = checkPermission(repoID, user, "download", false)
+	appErr = checkPermission(r.Context(), repoID, user, "download", false)
 	if appErr != nil {
 		return appErr
 	}
@@ -459,7 +459,7 @@ func recvFSCB(rsp http.ResponseWriter, r *http.Request) *appError {
 		return appErr
 	}
 
-	appErr = checkPermission(repoID, user, "upload", false)
+	appErr = checkPermission(r.Context(), repoID, user, "upload", false)
 	if appErr != nil {
 		return appErr
 	}
@@ -529,7 +529,7 @@ func postCheckExistCB(rsp http.ResponseWriter, r *http.Request, existType checkE
 	if appErr != nil {
 		return appErr
 	}
-	appErr = checkPermission(repoID, user, "download", false)
+	appErr = checkPermission(r.Context(), repoID, user, "download", false)
 	if appErr != nil {
 		return appErr
 	}
@@ -591,7 +591,7 @@ func packFSCB(rsp http.ResponseWriter, r *http.Request) *appError {
 	if appErr != nil {
 		return appErr
 	}
-	appErr = checkPermission(repoID, user, "download", false)
+	appErr = checkPermission(r.Context(), repoID, user, "download", false)
 	if appErr != nil {
 		return appErr
 	}
@@ -809,7 +809,7 @@ func putSendBlockCB(rsp http.ResponseWriter, r *http.Request) *appError {
 		return appErr
 	}
 
-	appErr = checkPermission(repoID, user, "upload", false)
+	appErr = checkPermission(r.Context(), repoID, user, "upload", false)
 	if appErr != nil {
 		return appErr
 	}
@@ -844,7 +844,7 @@ func getBlockInfo(rsp http.ResponseWriter, r *http.Request) *appError {
 		return appErr
 	}
 
-	appErr = checkPermission(repoID, user, "download", false)
+	appErr = checkPermission(r.Context(), repoID, user, "download", false)
 	if appErr != nil {
 		return appErr
 	}
@@ -962,7 +962,7 @@ func putCommitCB(rsp http.ResponseWriter, r *http.Request) *appError {
 	if appErr != nil {
 		return appErr
 	}
-	appErr = checkPermission(repoID, user, "upload", true)
+	appErr = checkPermission(r.Context(), repoID, user, "upload", true)
 	if appErr != nil {
 		return appErr
 	}
@@ -1011,7 +1011,7 @@ func getCommitInfo(rsp http.ResponseWriter, r *http.Request) *appError {
 	if appErr != nil {
 		return appErr
 	}
-	appErr = checkPermission(repoID, user, "download", false)
+	appErr = checkPermission(r.Context(), repoID, user, "download", false)
 	if appErr != nil {
 		return appErr
 	}
@@ -1049,7 +1049,7 @@ func putUpdateBranchCB(rsp http.ResponseWriter, r *http.Request) *appError {
 		return appErr
 	}
 
-	appErr = checkPermission(repoID, user, "upload", false)
+	appErr = checkPermission(r.Context(), repoID, user, "upload", false)
 	if appErr != nil && appErr.Code == http.StatusForbidden {
 		return appErr
 	}
@@ -1294,7 +1294,7 @@ func syncAuthError(usesSQLite bool, status int, message string) *appError {
 	return &appError{Message: message, Code: status}
 }
 
-func checkPermission(repoID, user, op string, skipCache bool) *appError {
+func checkPermission(ctx context.Context, repoID, user, op string, skipCache bool) *appError {
 	usesSQLite := repomgr.UsesSQLite()
 	var cacheKey string
 	if !usesSQLite {
@@ -1320,7 +1320,9 @@ func checkPermission(repoID, user, op string, skipCache bool) *appError {
 
 	if usesSQLite {
 		// The core owns SQLite share rules and can change a grant between requests.
-		permission, err := rpcclient.Call("check_permission", repoID, user)
+		rpcCtx, cancel := context.WithTimeout(ctx, option.DBOpTimeout)
+		defer cancel()
+		permission, err := rpcclient.CallContext(rpcCtx, "check_permission", repoID, user)
 		if err != nil {
 			return &appError{err, "", http.StatusInternalServerError}
 		}

@@ -1,6 +1,8 @@
 # C Baseline 构建记录（sqlite3 + C fileserver）
 
-环境：Ubuntu 22.04，4 核 7G，无 docker。全部源码编译，安装到 `/usr/local`。
+环境：Ubuntu 22.04，4 核 7G，无 docker。
+
+**安装位置：`~/opt/seafile-baseline`（用户目录），不装 `/usr/local`。** 容器随时回收，`/usr/local` 与 apt 状态都会丢；恢复方式是一条 `scripts/bootstrap.sh`（见 `llwsb001/seafile-compat-tests`）。已验证：清空 `/usr/local` 依赖（PATH 只留 `prefix/bin:/opt/go/bin:/usr/bin:/bin`、`LD_LIBRARY_PATH` 只留 prefix）时，测试仍是 **117 passed**。
 
 ## 依赖
 

@@ -59,18 +59,23 @@ type emailUser struct {
 }
 
 func (s *Identity) emailUser(ctx context.Context, email string) (*emailUser, error) {
-	const query = `
-SELECT e.id, e.email, e.is_staff, e.is_active, COALESCE(e.ctime, 0),
-       COALESCE(r.role, ''), e.passwd, e.reference_id
-  FROM EmailUser e LEFT JOIN UserRole r ON e.email = r.email
- WHERE e.email IN (?, ?)
- ORDER BY e.email = ? DESC
- LIMIT 1`
+	return queryEmailUser(ctx, s.users, email)
+}
+
+const accountColumns = `SELECT e.id, e.email, COALESCE(e.is_staff, 0), COALESCE(e.is_active, 0),
+	COALESCE(e.ctime, 0), COALESCE(r.role, ''), e.passwd, `
+const accountTables = " FROM EmailUser e LEFT JOIN UserRole r ON e.email = r.email"
+
+func queryEmailUser(ctx context.Context, db *sql.DB, email string) (*emailUser, error) {
+	return scanAccount(db.QueryRowContext(ctx, accountColumns+"e.reference_id"+accountTables+
+		" WHERE e.email IN (?, ?) ORDER BY e.email = ? DESC LIMIT 1", email, asciiLower(email), email))
+}
+
+func scanAccount(row interface{ Scan(...any) error }) (*emailUser, error) {
 	user := &emailUser{Source: "DB"}
 	var staff, active int
-	err := s.users.QueryRowContext(ctx, query, email, asciiLower(email), email).Scan(
-		&user.ID, &user.Email, &staff, &active, &user.CreatedAt, &user.Role, &user.Password, &user.ReferenceID)
-	if err != nil {
+	if err := row.Scan(&user.ID, &user.Email, &staff, &active, &user.CreatedAt,
+		&user.Role, &user.Password, &user.ReferenceID); err != nil {
 		return nil, err
 	}
 	user.Email = asciiLower(user.Email)

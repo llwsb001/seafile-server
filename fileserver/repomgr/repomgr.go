@@ -13,6 +13,7 @@ import (
 	"github.com/haiwen/seafile-server/fileserver/commitmgr"
 	"github.com/haiwen/seafile-server/fileserver/option"
 	log "github.com/sirupsen/logrus"
+	"modernc.org/sqlite"
 )
 
 // Repo status
@@ -69,6 +70,12 @@ var seafileDB *sql.DB
 // Init initialize status of repomgr package
 func Init(seafDB *sql.DB) {
 	seafileDB = seafDB
+}
+
+// UsesSQLite reports whether sync requests use a shared SQLite database.
+func UsesSQLite() bool {
+	_, ok := seafileDB.Driver().(*sqlite.Driver)
+	return ok
 }
 
 // Get returns Repo object by repo ID.

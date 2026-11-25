@@ -43,6 +43,10 @@ v7 验证了鉴权和即时撤销、浏览器下载及 Range、ZIP 的准备及�
 | Go | 258.62 | 5410.96 | 2.2 ms | 34.5 MiB |
 | C 接管 | 289.84 | 2507.57 | 4.8 ms | 21.8 MiB |
 
+## 默认分支复验
+
+在 Linux ARM64 上复验了服务端 `master` 的文件服务提交 `fade07295222cfa7a261eb4f635ebf0696ea695e` 和兼容仓库候选 `41d1b6304193490d0895ed8c3ec0e54f0a955cc4`。v6 的 C/C 与 C/Go 各通过 109 步，v7 各通过 25 个场景、473 步。真实 Seahub 和两个锁定客户端再次完成双向同步、设备令牌撤销、Go 重启及 C 接管后的同库读写。 [服务端提交](https://github.com/llwsb001/seafile-server/commit/fade07295222cfa7a261eb4f635ebf0696ea695e) · [兼容仓库候选](https://github.com/llwsb001/seafile-compat-tests/commit/41d1b6304193490d0895ed8c3ec0e54f0a955cc4)
+
 ## 复现入口
 
 - `make test-fileserver` 使用锁定的 C 与真实 Go 二进制复跑 v7，`SCENARIO_SET=all` 选择全部场景。 [参数和冻结规则](https://github.com/llwsb001/seafile-compat-tests/tree/886979b9772cee6556408502e9763b76b40c8bbf/fixtures/v7)

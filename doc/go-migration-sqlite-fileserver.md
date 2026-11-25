@@ -48,7 +48,7 @@
 
 ### 启动 SQLite Go 组合
 
-在已有 SQLite 数据与配置目录上，将 `seafile.conf` 的 `[database] type` 设为 `sqlite`，在 `[fileserver]` 配置监听地址和端口并开启 `use_go_fileserver`。给两个进程设置同一 `JWT_PRIVATE_KEY`，使用同一服务账号。先在一个终端启动核心，等 `seafile.sock` 可用后，在另一终端启动文件服务。
+在隔离的 SQLite 数据副本上验收启动和基础读取。将 `seafile.conf` 的 `[database] type` 设为 `sqlite`，在 `[fileserver]` 配置监听地址和端口并开启 `use_go_fileserver`。给两个进程设置同一 `JWT_PRIVATE_KEY`，使用同一服务账号。先在一个终端启动核心，等 `seafile.sock` 可用后，在另一终端启动文件服务。正式切换前完成表中的写入、同步和回退验收。
 
 ```sh
 "$SEAFILE_TARGET_CORE_BIN" -f -F "$CONF_DIR" -d "$DATA_DIR" -c "$CCNET_DIR" -p "$RPC_DIR"

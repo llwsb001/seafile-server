@@ -74,7 +74,7 @@ func (w *fileWriter) moveBetweenLibraries(ctx context.Context, values []string, 
 func (w *fileWriter) moveTrees(ctx context.Context, move crossLibraryMove) ([2]*fileTree, *searpc.RPCError) {
 	var trees [2]*fileTree
 	for i, repoID := range []string{move.fromRepo, move.toRepo} {
-		tree, rpcErr := w.writableTree(ctx, repoID, move.user)
+		tree, rpcErr := w.writableTree(ctx, repoID, move.user, false)
 		if rpcErr != nil {
 			return trees, rpcErr
 		}
@@ -130,10 +130,10 @@ func (w *fileWriter) publishMove(ctx context.Context, from, to *fileTree, fromDe
 		return err
 	}
 	_, err = withSQLiteWrite(ctx, w.db, func(conn *sql.Conn) (bool, error) {
-		if _, err := publishSQLiteBranch(ctx, conn, to.repo.HeadCommitID, toCommit); err != nil {
+		if _, err := publishFileWrite(ctx, conn, to.repo.HeadCommitID, toCommit); err != nil {
 			return false, err
 		}
-		return publishSQLiteBranch(ctx, conn, from.repo.HeadCommitID, fromCommit)
+		return publishFileWrite(ctx, conn, from.repo.HeadCommitID, fromCommit)
 	})
 	if err == nil && task != nil {
 		task.finished = true

@@ -146,3 +146,34 @@ func lookupVirtualRepo(ctx context.Context, conn *sql.Conn, origin, path string)
 	err := conn.QueryRowContext(ctx, query, origin, path).Scan(&id)
 	return id, err
 }
+
+// DeleteSQLiteVirtualRepo removes a missing view and its metadata as one unit.
+func DeleteSQLiteVirtualRepo(ctx context.Context, db *sql.DB, info *repomgr.VRepoInfo, cloudMode bool) error {
+	_, err := withSQLiteWrite(ctx, db, func(conn *sql.Conn) (bool, error) {
+		deleted, err := conn.ExecContext(ctx, `DELETE FROM VirtualRepo WHERE repo_id = ? AND origin_repo = ?
+			AND path = ? AND base_commit = ?`, info.RepoID, info.OriginRepoID, info.Path, info.BaseCommitID)
+		if err != nil {
+			return false, err
+		}
+		rows, err := deleted.RowsAffected()
+		if err != nil {
+			return false, err
+		}
+		if rows == 0 {
+			return false, ErrSQLiteBranchChanged
+		}
+		tables := []string{"Repo", "RepoHead", "Branch", "RepoOwner", "SharedRepo", "RepoGroup",
+			"RepoUserToken", "RepoValidSince", "RepoSize", "RepoFileCount", "RepoInfo"}
+		if !cloudMode {
+			tables = append(tables, "InnerPubRepo")
+		}
+		for _, table := range tables {
+			if _, err := conn.ExecContext(ctx, "DELETE FROM "+table+" WHERE repo_id = ?", info.RepoID); err != nil {
+				return false, err
+			}
+		}
+		_, err = conn.ExecContext(ctx, "INSERT OR IGNORE INTO GarbageRepos (repo_id) VALUES (?)", info.RepoID)
+		return err == nil, err
+	})
+	return err
+}

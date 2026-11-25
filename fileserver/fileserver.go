@@ -198,7 +198,8 @@ func runFileServer(ctx context.Context) error {
 
 	sizeSchedulerInit()
 
-	virtualRepoInit()
+	stopVirtualRepo := virtualRepoInit()
+	defer stopVirtualRepo()
 
 	initUpload()
 

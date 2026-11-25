@@ -5,8 +5,10 @@ import (
 	"database/sql"
 	"fmt"
 
+	"github.com/haiwen/seafile-server/fileserver/internal/seafserver"
 	"github.com/haiwen/seafile-server/fileserver/option"
 	"github.com/haiwen/seafile-server/fileserver/repomgr"
+	"modernc.org/sqlite"
 )
 
 // InfiniteQuota indicates that the quota is unlimited.
@@ -75,6 +77,11 @@ func getUserQuota(user string) (int64, error) {
 
 	if quota <= 0 {
 		quota = option.DefaultQuota
+		if _, sqliteDB := seafileDB.Driver().(*sqlite.Driver); sqliteDB {
+			if override, ok := seafserver.SQLiteDefaultQuotaOverride(ctx, seafileDB); ok {
+				return override, nil
+			}
+		}
 	}
 
 	return quota, nil

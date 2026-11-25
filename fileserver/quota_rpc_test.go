@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"maps"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -47,7 +48,10 @@ INSERT INTO RepoSize VALUES ('origin', 150), ('virtual', 200);
 		t.Fatal(err)
 	}
 	defer writer.Close()
-	quota := seafserver.NewUserQuota(db, seafserver.NewServerConfig(db, nil))
+	config := seafserver.NewServerConfig(db, nil)
+	quota := seafserver.NewUserQuota(db, config)
+	handlers := quota.ManagementRPCHandlers(writer)
+	maps.Copy(handlers, config.RPCHandlers(writer))
 	endpoint := filepath.Join(root, "seafile.sock")
 	listener, err := net.Listen("unix", endpoint)
 	if err != nil {
@@ -56,7 +60,7 @@ INSERT INTO RepoSize VALUES ('origin', 150), ('virtual', 200);
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
-		done <- searpc.Serve(ctx, listener, seafserver.RPCService, quota.ManagementRPCHandlers(writer))
+		done <- searpc.Serve(ctx, listener, seafserver.RPCService, handlers)
 	}()
 	defer func() {
 		cancel()
@@ -91,5 +95,15 @@ INSERT INTO RepoSize VALUES ('origin', 150), ('virtual', 200);
 	setQuota("owner@example.test", 501)
 	if appErr := checkQuotaByContentLength(request, "virtual", 350); appErr != nil {
 		t.Fatalf("the consumer did not observe the committed quota update: %v", appErr)
+	}
+	setQuota("owner@example.test", 0)
+	if result, err := client.Call("set_server_config_string", "quota", "default", "1KB"); err != nil || result != float64(0) {
+		t.Fatalf("setting the default quota returned %v, %v", result, err)
+	}
+	if appErr := checkQuotaByContentLength(request, "virtual", 849); appErr != nil {
+		t.Fatalf("upload below the SQLite default quota was denied: %v", appErr)
+	}
+	if appErr := checkQuotaByContentLength(request, "virtual", 850); appErr == nil || appErr.Code != seafHTTPResNoQuota {
+		t.Fatalf("upload at the SQLite default quota should return no-quota: %v", appErr)
 	}
 }

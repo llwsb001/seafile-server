@@ -56,14 +56,21 @@ type configValue struct {
 
 func (c *ServerConfig) value(ctx context.Context, group, key string) configValue {
 	group, key = cString(group), cString(key)
-	const query = "SELECT value FROM SeafileConf WHERE cfg_group = ? AND cfg_key = ?"
-	var value sql.NullString
-	err := c.db.QueryRowContext(ctx, query, group, key).Scan(&value)
-	if err == nil && value.Valid {
-		return configValue{strings.Trim(cString(value.String), keyFileSpace), true, true}
+	if value := databaseConfigValue(ctx, c.db, group, key); value.found {
+		return value
 	}
 	text, ok := c.file[configKey{group, key}]
 	return configValue{text, ok, false}
+}
+
+func databaseConfigValue(ctx context.Context, db *sql.DB, group, key string) configValue {
+	const query = "SELECT value FROM SeafileConf WHERE cfg_group = ? AND cfg_key = ?"
+	var value sql.NullString
+	err := db.QueryRowContext(ctx, query, group, key).Scan(&value)
+	if err == nil && value.Valid {
+		return configValue{strings.Trim(cString(value.String), keyFileSpace), true, true}
+	}
+	return configValue{}
 }
 
 func cString(value string) string {

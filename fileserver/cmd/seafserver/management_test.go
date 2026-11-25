@@ -60,6 +60,18 @@ func TestManagementRPCBootstrap(t *testing.T) {
 			path := filepath.Join(root, "seafile.sock")
 			waitForRPC(t, path, enabled)
 			client := searpc.Init(path, seafserver.RPCService, 0)
+			for _, method := range []string{
+				"seafile_check_passwd", "seafile_set_passwd", "seafile_unset_passwd",
+				"seafile_is_passwd_set", "seafile_get_decrypt_key",
+			} {
+				wantError := "cannot find function " + method
+				if enabled {
+					wantError = "Bad arguments"
+				}
+				if _, err := client.Call(method); err == nil || !strings.Contains(err.Error(), wantError) {
+					t.Errorf("%s returned %v, want %q", method, err, wantError)
+				}
+			}
 			result, err := client.Call("set_server_config_string", "example", "value", "SQLite")
 			if !enabled {
 				if err == nil || !strings.Contains(err.Error(), "cannot find function set_server_config_string") {

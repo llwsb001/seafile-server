@@ -13,6 +13,7 @@
 #include <fcntl.h>
 
 #include <glib.h>
+#include <glib-unix.h>
 
 #include "utils.h"
 #include "log.h"
@@ -34,6 +35,9 @@ char *bin_dir = NULL;
 char *installpath = NULL;
 char *topdir = NULL;
 gboolean enabled_go_fileserver = FALSE;
+static gboolean enabled_go_core = FALSE;
+static int go_core_pid;
+static int go_fileserver_pid;
 
 char *seafile_ld_library_path = NULL;
 
@@ -72,7 +76,7 @@ controller_exit (int code)
 
 /* returns the pid of the newly created process */
 static int
-spawn_process (char *argv[], bool is_python_process)
+spawn_process (char *argv[], bool is_python_process, const char *output_path)
 {
     char **ptr = argv;
     GString *buf = g_string_new(argv[0]);
@@ -93,6 +97,14 @@ spawn_process (char *argv[], bool is_python_process)
     pid_t pid = fork();
 
     if (pid == 0) {
+        if (output_path) {
+            int output = open (output_path, O_WRONLY | O_CREAT | O_APPEND, 0644);
+            if (output < 0 || dup2 (output, STDOUT_FILENO) < 0 || dup2 (output, STDERR_FILENO) < 0) {
+                perror (output_path);
+                _exit (1);
+            }
+            close (output);
+        }
         if (is_python_process) {
             if (pipefd[0] > 0 && pipefd[1] > 0) {
                 close(pipefd[0]);
@@ -194,6 +206,23 @@ start_seaf_server ()
         logfile = g_build_filename (ctl->logdir, "seafile.log", NULL);
     }
 
+    if (enabled_go_core) {
+        char *argv[] = {
+            "seaf-server-go", "-f",
+            "-F", ctl->central_config_dir,
+            "-c", ctl->config_dir,
+            "-d", ctl->seafile_dir,
+            "-P", ctl->pidfile[PID_SERVER],
+            "-p", ctl->rpc_pipe_path,
+            "--enable-management-rpcs",
+            "--enable-share-writes",
+            NULL};
+        const char *stdout_log = g_getenv ("SEAFILE_LOG_TO_STDOUT");
+        go_core_pid = spawn_process (argv, false,
+                                     g_strcmp0 (stdout_log, "true") == 0 ? NULL : logfile);
+        return go_core_pid > 0 ? 0 : -1;
+    }
+
     char *argv[] = {
         "seaf-server",
         "-F", ctl->central_config_dir,
@@ -203,7 +232,7 @@ start_seaf_server ()
         "-P", ctl->pidfile[PID_SERVER],
         "-p", ctl->rpc_pipe_path,
         NULL};
-    int pid = spawn_process (argv, false);
+    int pid = spawn_process (argv, false, NULL);
     if (pid <= 0) {
         seaf_warning ("Failed to spawn seaf-server\n");
         return -1;
@@ -226,6 +255,7 @@ start_go_fileserver()
     char *argv[] = {
         "fileserver",
         "-F", ctl->central_config_dir,
+        "-c", ctl->config_dir,
         "-d", ctl->seafile_dir,
         "-l", logfile,
         "-p", ctl->rpc_pipe_path,
@@ -233,7 +263,9 @@ start_go_fileserver()
         NULL};
 
     seaf_message ("starting go-fileserver ...");
-    int pid = spawn_process(argv, false);
+    int pid = spawn_process (argv, false, NULL);
+    if (enabled_go_core)
+        go_fileserver_pid = pid;
 
     if (pid <= 0) {
         seaf_warning("Failed to spawn fileserver\n");
@@ -383,7 +415,7 @@ start_seafdav() {
             "-v",
             NULL
         };
-        pid = spawn_process (argv, true);
+        pid = spawn_process (argv, true, NULL);
     } else {
         char *argv[] = {
             (char *)get_python_executable(),
@@ -396,7 +428,7 @@ start_seafdav() {
             "--host", conf.host,
             NULL
         };
-        pid = spawn_process (argv, true);
+        pid = spawn_process (argv, true, NULL);
     }
 
     if (pid <= 0) {
@@ -468,15 +500,19 @@ should_start_go_fileserver()
         }
     }
 
-    if (ret) {
-        char *type = NULL;
-        type = g_key_file_get_string (key_file, "database", "type", NULL);
-        if (!type || g_strcmp0 (type, "mysql") != 0) {
-            seaf_message ("Use C fileserver because go fileserver does not support sqlite.");
-            ret = FALSE;
+    char *type = g_key_file_get_string (key_file, "database", "type", NULL);
+    if (type && g_ascii_strcasecmp (type, "sqlite") == 0) {
+        enabled_go_core = ret;
+        if (ret) {
+            g_setenv ("ENABLE_GO_FILESERVER", "true", TRUE);
+        } else {
+            g_unsetenv ("ENABLE_GO_FILESERVER");
         }
-        g_free (type);
+    } else if (ret && g_strcmp0 (type, "mysql") != 0) {
+        seaf_warning ("Go fileserver requires database type sqlite or mysql.\n");
+        ret = FALSE;
     }
+    g_free (type);
 
 out:
     g_key_file_free (key_file);
@@ -486,15 +522,76 @@ out:
 }
 
 static gboolean
+go_process_running (int pid)
+{
+    return pid > 0 && (kill ((pid_t)pid, 0) == 0 || errno == EPERM);
+}
+
+static int
+wait_for_go_process (int which, int pid, const char *name)
+{
+    gint64 deadline = g_get_monotonic_time () + 8 * G_TIME_SPAN_SECOND;
+    while (g_get_monotonic_time () < deadline && go_process_running (pid)) {
+        if (read_pid_from_pidfile (ctl->pidfile[which]) == pid)
+            return 0;
+        g_usleep (50 * G_TIME_SPAN_MILLISECOND);
+    }
+    seaf_warning ("%s did not start. Check its process log.\n", name);
+    return -1;
+}
+
+static void
+stop_go_process (int which, int *pid)
+{
+    if (go_process_running (*pid)) {
+        kill ((pid_t)*pid, SIGTERM);
+        gint64 deadline = g_get_monotonic_time () + 6 * G_TIME_SPAN_SECOND;
+        while (g_get_monotonic_time () < deadline && go_process_running (*pid))
+            g_usleep (50 * G_TIME_SPAN_MILLISECOND);
+        if (go_process_running (*pid)) {
+            seaf_warning ("Go process %d did not stop after SIGTERM.\n", *pid);
+            kill ((pid_t)*pid, SIGKILL);
+        }
+    }
+    if (*pid > 0 && read_pid_from_pidfile (ctl->pidfile[which]) == *pid)
+        g_unlink (ctl->pidfile[which]);
+    *pid = 0;
+}
+
+static int
+start_go_services (void)
+{
+    if (!go_process_running (go_core_pid)) {
+        stop_go_process (PID_FILESERVER, &go_fileserver_pid);
+        stop_go_process (PID_SERVER, &go_core_pid);
+        if (start_seaf_server () < 0 ||
+            wait_for_go_process (PID_SERVER, go_core_pid, "seaf-server-go") < 0) {
+            stop_go_process (PID_SERVER, &go_core_pid);
+            return -1;
+        }
+    }
+    if (!go_process_running (go_fileserver_pid)) {
+        if (start_go_fileserver () < 0 ||
+            wait_for_go_process (PID_FILESERVER, go_fileserver_pid, "fileserver") < 0) {
+            stop_go_process (PID_FILESERVER, &go_fileserver_pid);
+            return -1;
+        }
+    }
+    return 0;
+}
+
+static gboolean
 check_process (void *data)
 {
-    if (need_restart(PID_SERVER)) {
-        seaf_message ("seaf-server need restart...\n");
-        start_seaf_server();
-    }
+    if (enabled_go_core) {
+        start_go_services ();
+    } else {
+        if (need_restart(PID_SERVER)) {
+            seaf_message ("seaf-server need restart...\n");
+            start_seaf_server();
+        }
 
-    if (enabled_go_fileserver) {
-        if (need_restart(PID_FILESERVER)) {
+        if (enabled_go_fileserver && need_restart(PID_FILESERVER)) {
             seaf_message("fileserver need restart...\n");
             start_go_fileserver();
         }
@@ -524,8 +621,13 @@ stop_services ()
 {
     seaf_message ("shutting down all services ...\n");
 
-    kill_by_force(PID_SERVER);
-    kill_by_force(PID_FILESERVER);
+    if (enabled_go_core) {
+        stop_go_process (PID_FILESERVER, &go_fileserver_pid);
+        stop_go_process (PID_SERVER, &go_core_pid);
+    } else {
+        kill_by_force(PID_SERVER);
+        kill_by_force(PID_FILESERVER);
+    }
     kill_by_force(PID_SEAFDAV);
 }
 
@@ -593,6 +695,19 @@ seaf_controller_init (SeafileController *ctl,
 static int
 seaf_controller_start ()
 {
+    if (enabled_go_core) {
+        if (g_mkdir_with_parents (ctl->rpc_pipe_path, 0755) < 0) {
+            seaf_warning ("Failed to create RPC directory %s: %s\n",
+                          ctl->rpc_pipe_path, strerror (errno));
+            return -1;
+        }
+        if (start_go_services () < 0) {
+            stop_services ();
+            return -1;
+        }
+        start_process_monitor ();
+        return 0;
+    }
     if (start_seaf_server() < 0) {
         seaf_warning ("Failed to start seaf server\n");
         return -1;
@@ -660,7 +775,10 @@ sigint_handler (int signo)
 static void
 sigchld_handler (int signo)
 {
-    waitpid (-1, NULL, WNOHANG);
+    int saved_errno = errno;
+    while (waitpid (-1, NULL, WNOHANG) > 0) {
+    }
+    errno = saved_errno;
 }
 
 static void
@@ -669,11 +787,24 @@ sigusr1_handler (int signo)
     seafile_log_reopen();
 }
 
-static void
-set_signal_handlers ()
+static gboolean
+shutdown_go_services (void *unused)
 {
-    signal (SIGINT, sigint_handler);
-    signal (SIGTERM, sigint_handler);
+    stop_services ();
+    remove_controller_pidfile ();
+    controller_exit (0);
+}
+
+static void
+set_signal_handlers (void)
+{
+    if (enabled_go_core) {
+        g_unix_signal_add (SIGINT, shutdown_go_services, NULL);
+        g_unix_signal_add (SIGTERM, shutdown_go_services, NULL);
+    } else {
+        signal (SIGINT, sigint_handler);
+        signal (SIGTERM, sigint_handler);
+    }
     signal (SIGCHLD, sigchld_handler);
     signal (SIGUSR1, sigusr1_handler);
     signal (SIGPIPE, SIG_IGN);
@@ -884,7 +1015,7 @@ int main (int argc, char **argv)
         case 'f':
             daemon_mode = 0;
             break;
-        case 'L':
+        case 'l':
             logdir = g_strdup(optarg);
             break;
         case 'g':
@@ -943,12 +1074,12 @@ int main (int argc, char **argv)
         controller_exit (1);
     }
 
-    set_signal_handlers ();
-
     enabled_go_fileserver = should_start_go_fileserver();
-
-    if (seaf_controller_start () < 0)
-        controller_exit (1);
+    if (!enabled_go_core) {
+        set_signal_handlers ();
+        if (seaf_controller_start () < 0)
+            controller_exit (1);
+    }
 
     const char *log_to_stdout_env = g_getenv("SEAFILE_LOG_TO_STDOUT");
     if (g_strcmp0(log_to_stdout_env, "true") == 0) {
@@ -958,7 +1089,10 @@ int main (int argc, char **argv)
 #ifndef WIN32
     if (daemon_mode) {
 #ifndef __APPLE__
-        daemon (1, 0);
+        if (daemon (1, 0) < 0) {
+            seaf_warning ("Failed to daemonize: %s\n", strerror (errno));
+            controller_exit (1);
+        }
 #else   /* __APPLE */
         /* daemon is deprecated under APPLE
          * use fork() instead
@@ -978,6 +1112,12 @@ int main (int argc, char **argv)
 #endif  /* __APPLE */
     }
 #endif /* !WIN32 */
+
+    if (enabled_go_core) {
+        set_signal_handlers ();
+        if (seaf_controller_start () < 0)
+            controller_exit (1);
+    }
 
     if (controller_pidfile == NULL) {
         controller_pidfile = g_strdup(g_getenv ("SEAFILE_PIDFILE"));

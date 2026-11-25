@@ -47,7 +47,9 @@ func TestAccountRenameRollback(t *testing.T) {
 		INSERT INTO GroupUser VALUES (1, 'before@example.test', 0);`)
 	users := open(userPath, `
 		CREATE TABLE EmailUser (id INTEGER PRIMARY KEY, email TEXT UNIQUE);
-		INSERT INTO EmailUser VALUES (1, 'before@example.test');`)
+		INSERT INTO EmailUser VALUES (1, 'before@example.test');
+		CREATE TABLE UserRole (email TEXT, role TEXT, UNIQUE (email, role));
+		INSERT INTO UserRole VALUES ('before@example.test', 'librarian');`)
 	accounts, err := OpenAccounts(root, corePath)
 	if err != nil {
 		t.Fatal(err)
@@ -64,6 +66,7 @@ func TestAccountRenameRollback(t *testing.T) {
 			{core, "SELECT email FROM RepoUserToken WHERE token = 'synthetic-token'"},
 			{groups, "SELECT user_name FROM GroupUser WHERE group_id = 1"},
 			{users, "SELECT email FROM EmailUser WHERE id = 1"},
+			{users, "SELECT email FROM UserRole WHERE role = 'librarian'"},
 		} {
 			var actual string
 			if err := reference.db.QueryRow(reference.query).Scan(&actual); err != nil || actual != want {

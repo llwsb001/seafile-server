@@ -49,6 +49,13 @@ func validSharePermission(permission string) bool {
 	return permission == "r" || permission == "rw"
 }
 
+const insertPersonalShareSQL = `
+INSERT INTO SharedRepo (repo_id, from_email, to_email, permission)
+SELECT ?1, ?2, ?3, ?4
+ WHERE NOT EXISTS (SELECT 1 FROM SharedRepo WHERE repo_id = ?1 AND from_email = ?2 AND to_email = ?3)`
+
+const insertGroupShareSQL = "INSERT INTO RepoGroup (repo_id, group_id, user_name, permission) VALUES (?, ?, ?, ?)"
+
 func (s *ShareWriter) write(ctx context.Context, repoID string, failed *searpc.RPCError, query string, args ...any) (any, *searpc.RPCError) {
 	eligible, err := s.exec(ctx, repoID, query, args...)
 	if err != nil {
@@ -90,11 +97,7 @@ func (s *ShareWriter) addShare(ctx context.Context, args []json.RawMessage) (any
 	if !validSharePermission(*permission) {
 		return invalidShareArguments("Invalid permission parameter")
 	}
-	const insert = `
-INSERT INTO SharedRepo (repo_id, from_email, to_email, permission)
-SELECT ?1, ?2, ?3, ?4
- WHERE NOT EXISTS (SELECT 1 FROM SharedRepo WHERE repo_id = ?1 AND from_email = ?2 AND to_email = ?3)`
-	return s.write(ctx, *repoID, nil, insert, *repoID, asciiLower(*from), asciiLower(*to), *permission)
+	return s.write(ctx, *repoID, nil, insertPersonalShareSQL, *repoID, asciiLower(*from), asciiLower(*to), *permission)
 }
 
 func (s *ShareWriter) setSharePermission(ctx context.Context, args []json.RawMessage) (any, *searpc.RPCError) {
@@ -138,8 +141,7 @@ func (s *ShareWriter) addGroupShare(ctx context.Context, args []json.RawMessage)
 	if !validSharePermission(*permission) {
 		return invalidShareArguments("Invalid permission parameter")
 	}
-	const insert = `INSERT INTO RepoGroup (repo_id, group_id, user_name, permission) VALUES (?, ?, ?, ?)`
-	return s.write(ctx, *repoID, nil, insert, *repoID, groupID, *user, *permission)
+	return s.write(ctx, *repoID, nil, insertGroupShareSQL, *repoID, groupID, *user, *permission)
 }
 
 func (s *ShareWriter) setGroupPermission(ctx context.Context, args []json.RawMessage) (any, *searpc.RPCError) {

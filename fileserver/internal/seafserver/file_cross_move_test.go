@@ -21,16 +21,17 @@ func TestCrossLibraryMovePublishesBothHeadsOrNeither(t *testing.T) {
 		return value.(string)
 	}
 	source := create("source", owner)
-	target := create("target", owner)
-	other := create("other", "other@example.test")
+	const otherOwner = "other@example.test"
+	target := create("target", otherOwner)
+	readOnly := create("read-only", otherOwner)
 	config := NewServerConfig(db, nil)
 	handlers, stop := reader.FileWriteRPCHandlers(ctx, db, nil, false, NewUserQuota(db, config), FileMoveLimits{})
 	defer stop()
 	if _, rpcErr := handlers["seafile_post_empty_file"](ctx, fileWriteRPCArgs(t, source, "/", "transfer.txt", owner)); rpcErr != nil {
 		t.Fatal(rpcErr)
 	}
-	if _, err := db.Exec("INSERT INTO SharedRepo (repo_id, from_email, to_email, permission) VALUES (?, ?, ?, 'rw')",
-		other, "other@example.test", owner); err != nil {
+	if _, err := db.Exec(`INSERT INTO SharedRepo (repo_id, from_email, to_email, permission)
+		VALUES (?, ?, ?, 'rw'), (?, ?, ?, 'r')`, target, otherOwner, owner, readOnly, otherOwner, owner); err != nil {
 		t.Fatal(err)
 	}
 	head := func(id string) string {
@@ -44,10 +45,10 @@ func TestCrossLibraryMovePublishesBothHeadsOrNeither(t *testing.T) {
 	writer := &fileWriter{reader: reader, db: db, permissions: &permissionReader{db: db}, quota: NewUserQuota(db, config)}
 	req := crossLibraryMove{fromRepo: source, toRepo: target, user: owner,
 		names: []string{"transfer.txt"}, targets: []string{"transfer.txt"}}
-	foreign := req
-	foreign.toRepo = other
-	if rpcErr := writer.runCrossMove(ctx, foreign, nil); rpcErr == nil || rpcErr.Code != errRepoAuth {
-		t.Fatalf("cross-library move with different destination owner returned %v", rpcErr)
+	denied := req
+	denied.toRepo = readOnly
+	if rpcErr := writer.runCrossMove(ctx, denied, nil); rpcErr == nil || rpcErr.Code != errRepoAuth {
+		t.Fatalf("cross-library move to a read-only share returned %v", rpcErr)
 	}
 	oldSource, oldTarget := head(source), head(target)
 	if _, err := db.Exec(`CREATE TABLE MoveWriteFault (repo_id TEXT);

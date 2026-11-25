@@ -11,7 +11,6 @@ import (
 	"strings"
 
 	"github.com/haiwen/seafile-server/fileserver/fsmgr"
-	"github.com/haiwen/seafile-server/fileserver/repomgr"
 	"github.com/haiwen/seafile-server/fileserver/searpc"
 )
 
@@ -81,13 +80,6 @@ func (w *fileWriter) moveTrees(ctx context.Context, move crossLibraryMove) ([2]*
 		}
 		if tree.repo.IsEncrypted {
 			return trees, rpcError(errBadArgs, "Cross-library move requires unencrypted libraries")
-		}
-		owner, err := repomgr.LoadRepoOwner(ctx, w.reader.db, repoID)
-		if err != nil {
-			return trees, fileWriteFailure("read cross-library move owner", err)
-		}
-		if asciiLower(owner) != asciiLower(move.user) {
-			return trees, rpcError(errRepoAuth, "Cross-library move requires ownership of both libraries")
 		}
 		trees[i] = tree
 	}

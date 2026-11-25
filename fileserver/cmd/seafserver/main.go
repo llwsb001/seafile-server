@@ -90,6 +90,14 @@ func run(ctx context.Context, args []string) error {
 		maps.Copy(handlers, identity.RPCHandlers())
 		cloudMode := config.Section("general").Key("cloud_mode").String()
 		maps.Copy(handlers, reader.PermissionRPCHandlers(identity, cloudMode == "true" || cloudMode == "1"))
+		if enableManagementRPCs {
+			organizations, err := seafserver.OpenOrganizations(ccnetDir, identity)
+			if err != nil {
+				return err
+			}
+			defer organizations.Close()
+			maps.Copy(handlers, organizations.RPCHandlers())
+		}
 	}
 	if enableShareWrites {
 		writer, err := seafserver.OpenShareWriter(dbPath)

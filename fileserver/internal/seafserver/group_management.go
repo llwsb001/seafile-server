@@ -55,39 +55,45 @@ func (s *GroupManagement) createGroup(ctx context.Context, args []json.RawMessag
 	parent := intArgument(args, 3)
 	var id int64
 	ok, err := withSQLiteWrite(ctx, s.groups, func(conn *sql.Conn) (bool, error) {
-		const insert = `INSERT INTO "Group" (group_name, creator_name, timestamp, parent_group_id) VALUES (?, ?, ?, ?)`
-		creator := asciiLower(*user)
-		result, err := conn.ExecContext(ctx, insert, *name, creator, time.Now().UnixMicro(), parent)
-		if err != nil {
-			return false, err
-		}
-		id, err = result.LastInsertId()
-		if err != nil {
-			return false, err
-		}
-		if *user != "system admin" {
-			if _, err := conn.ExecContext(ctx, "INSERT INTO GroupUser (group_id, user_name, is_staff) VALUES (?, ?, 1)", id, creator); err != nil {
-				return false, err
-			}
-		}
-
-		path := strconv.FormatInt(id, 10)
-		if parent > 0 {
-			var parentPath string
-			if err := conn.QueryRowContext(ctx, "SELECT path FROM GroupStructure WHERE group_id = ?", parent).Scan(&parentPath); err != nil {
-				return false, err
-			}
-			path = parentPath + ", " + path
-		}
-		if parent == -1 || parent > 0 {
-			if _, err := conn.ExecContext(ctx, "INSERT INTO GroupStructure (group_id, path) VALUES (?, ?)", id, path); err != nil {
-				return false, err
-			}
-		}
-		return true, nil
+		var err error
+		id, err = insertGroup(ctx, conn, "main", *name, *user, parent)
+		return err == nil, err
 	})
 	if !ok {
 		return groupWriteFailure("Failed to create group", err)
+	}
+	return id, nil
+}
+
+func insertGroup(ctx context.Context, conn *sql.Conn, schema, name, user string, parent int) (int64, error) {
+	insert := `INSERT INTO ` + schema + `."Group" (group_name, creator_name, timestamp, parent_group_id) VALUES (?, ?, ?, ?)`
+	creator := asciiLower(user)
+	result, err := conn.ExecContext(ctx, insert, name, creator, time.Now().UnixMicro(), parent)
+	if err != nil {
+		return 0, err
+	}
+	id, err := result.LastInsertId()
+	if err != nil {
+		return 0, err
+	}
+	if user != "system admin" {
+		if _, err := conn.ExecContext(ctx, "INSERT INTO "+schema+".GroupUser (group_id, user_name, is_staff) VALUES (?, ?, 1)", id, creator); err != nil {
+			return 0, err
+		}
+	}
+
+	path := strconv.FormatInt(id, 10)
+	if parent > 0 {
+		var parentPath string
+		if err := conn.QueryRowContext(ctx, "SELECT path FROM "+schema+".GroupStructure WHERE group_id = ?", parent).Scan(&parentPath); err != nil {
+			return 0, err
+		}
+		path = parentPath + ", " + path
+	}
+	if parent == -1 || parent > 0 {
+		if _, err := conn.ExecContext(ctx, "INSERT INTO "+schema+".GroupStructure (group_id, path) VALUES (?, ?)", id, path); err != nil {
+			return 0, err
+		}
 	}
 	return id, nil
 }

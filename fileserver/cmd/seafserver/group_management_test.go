@@ -60,6 +60,16 @@ INSERT INTO "Group" VALUES (1, 'Previous');`)
 				if err != nil {
 					t.Fatal(err)
 				}
+				orgs, err := sql.Open("sqlite", filepath.Join(ccnet, "OrgMgr", "orgmgr.db"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				_, err = orgs.Exec(`CREATE TABLE OrgGroup (org_id INTEGER, group_id INTEGER);
+INSERT INTO OrgGroup VALUES (1, 1), (2, 1);`)
+				orgs.Close()
+				if err != nil {
+					t.Fatal(err)
+				}
 			}
 
 			ctx, cancel := context.WithCancel(context.Background())
@@ -79,10 +89,22 @@ INSERT INTO "Group" VALUES (1, 'Previous');`)
 				if err != nil || result != float64(0) {
 					t.Fatalf("enabled group RPC returned (%v, %v)", result, err)
 				}
+				for range 2 {
+					if value, err := client.Call("remove_org_group", 1, 1); err != nil || value != float64(0) {
+						t.Fatalf("organization group unlink returned (%v, %v)", value, err)
+					}
+				}
+				if value, err := client.Call("get_org_id_by_group", 1); err != nil || value != float64(2) {
+					t.Fatalf("other organization's group link returned (%v, %v)", value, err)
+				}
 				return
 			}
 			if err == nil || !strings.Contains(err.Error(), "cannot find function set_group_name") {
 				t.Fatalf("disabled group RPC returned (%v, %v)", result, err)
+			}
+			if _, err := client.Call("remove_org_group", 1, 1); err == nil ||
+				!strings.Contains(err.Error(), "cannot find function remove_org_group") {
+				t.Fatalf("disabled organization RPC returned %v", err)
 			}
 		})
 	}

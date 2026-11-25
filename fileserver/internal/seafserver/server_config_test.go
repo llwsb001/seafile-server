@@ -7,6 +7,23 @@ import (
 	"testing"
 )
 
+func TestConfigFileStringEscapes(t *testing.T) {
+	for _, test := range []struct {
+		input string
+		want  string
+		valid bool
+	}{
+		{`one\stwo\\three`, `one two\three`, true},
+		{`one\q`, "", false},
+		{`one\`, "", false},
+	} {
+		value := configValue{text: test.input, found: true}
+		if got, valid := value.string(); got != test.want || valid != test.valid {
+			t.Errorf("INI string %q: got (%q, %v), want (%q, %v)", test.input, got, valid, test.want, test.valid)
+		}
+	}
+}
+
 func TestServerConfigNullAndDuplicateOverrides(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "seafile.db")

@@ -18,6 +18,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime/debug"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -1359,6 +1360,12 @@ func doUpload(rsp http.ResponseWriter, r *http.Request, fsm *recvData, isAjax bo
 			mtimes[i] = t.Unix()
 		}
 	}
+	if repomgr.UsesSQLite() && fsm.rstart < 0 {
+		// C prepends each multipart file. Keep all metadata in that order.
+		slices.Reverse(fsm.fileNames)
+		slices.Reverse(fsm.fileHeaders)
+		slices.Reverse(mtimes)
+	}
 
 	if err := checkParentDir(repoID, parentDir); err != nil {
 		return err
@@ -2007,7 +2014,6 @@ func postFilesAndGenCommit(fileNames []string, repoID string, user, canonPath st
 		err := fmt.Errorf("failed to get head commit for repo %s", repo.ID)
 		return "", err
 	}
-	var names []string
 	var retryCnt int
 
 	var dents []*fsmgr.SeafDirent
@@ -2025,6 +2031,7 @@ func postFilesAndGenCommit(fileNames []string, repoID string, user, canonPath st
 	}
 
 retry:
+	var names []string
 	rootID, err := doPostMultiFiles(repo, headCommit.RootID, canonPath, dents, user, replace, &names)
 	if err != nil {
 		err := fmt.Errorf("failed to post files to %s in repo %s", canonPath, repo.ID)

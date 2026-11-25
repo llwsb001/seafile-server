@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/haiwen/seafile-server/fileserver/fsmgr"
 	"github.com/haiwen/seafile-server/fileserver/repomgr"
 	"github.com/haiwen/seafile-server/fileserver/searpc"
 )
@@ -87,6 +88,11 @@ func (r *Reader) createVirtualRepoInTx(ctx context.Context, conn *sql.Conn, repo
 	if rpcErr != nil {
 		return "", rpcError(errBadArgs, "Bad path")
 	}
+	counts, err := fsmgr.ReadFileCountInfo(r.fs, source.StoreID, dir.DirID, source.Version)
+	if err != nil {
+		log.Printf("create virtual repo: count files: %v", err)
+		return "", rpcError(errGeneral, "Internal error")
+	}
 
 	// C inherits the owner from the ordinary origin, even when the RPC's
 	// supplied owner differs. The original owner also creates the commit.
@@ -107,6 +113,10 @@ func (r *Reader) createVirtualRepoInTx(ctx context.Context, conn *sql.Conn, repo
 	if err := publishInitialRepo(ctx, conn, commit, owner); err != nil {
 		log.Printf("create virtual repo: publish initial metadata: %v", err)
 		return "", rpcError(errGeneral, "Failed to add repo.")
+	}
+	if err := writeSQLiteRepoStats(ctx, conn, commit.RepoID, commit.CommitID, counts.Size, counts.FileCount); err != nil {
+		log.Printf("create virtual repo: initial statistics: %v", err)
+		return "", rpcError(errGeneral, "Internal error")
 	}
 	const insert = "INSERT INTO VirtualRepo (repo_id, origin_repo, path, base_commit) VALUES (?, ?, ?, ?)"
 	if _, err := conn.ExecContext(ctx, insert, commit.RepoID, origin, fullPath, source.HeadCommitID); err != nil {

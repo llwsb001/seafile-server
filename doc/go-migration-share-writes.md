@@ -2,7 +2,9 @@
 
 Go 已能读取 SQLite 的用户、群组、组织和库权限，相邻兼容仓库提供 v2 的授权前后快照。下一批让现有 Python 客户端通过 `seafile.sock` 创建、修改和撤销普通库的个人分享、群组分享及内部公开权限。Go 写过的数据应能直接交给 C 继续读取和修改。 [身份 RPC](https://github.com/llwsb001/seafile-server/pull/9) · [权限 RPC](https://github.com/llwsb001/seafile-server/pull/10) · [v2 样本](https://github.com/llwsb001/seafile-compat-tests/blob/665059e6c3a92670e7363b508633944e62666201/fixtures/v2/README.md)
 
-目录分享会创建或复用虚拟库，新建时还要写入提交和库元数据。把目录分享放到虚拟库写入具备后交付。组织分享、令牌、密钥、配额和通知继续按 [迁移总计划](go-migration-plan.md) 分批推进。 [目录分享入口](../common/rpc-service.c#L1739) · [虚拟库创建](../server/virtual-repo.c#L260)
+v3 样本、个人分享及群组与内部公开写入均已合入。C 对 C 和 C 对 Go 各通过 64 个写入步骤，重启和 C 接管通过。下一批见 [Web 文件访问令牌](go-migration-web-access-tokens.md)。 [v3 回放](https://github.com/llwsb001/seafile-compat-tests/pull/6) · [个人分享](https://github.com/llwsb001/seafile-server/pull/13) · [群组与内部公开](https://github.com/llwsb001/seafile-server/pull/14)
+
+目录分享会创建或复用虚拟库，新建时还要写入提交和库元数据。把目录分享放到虚拟库写入具备后交付。组织分享、密钥、配额和通知继续按 [迁移总计划](go-migration-plan.md) 分批推进。 [目录分享入口](../common/rpc-service.c#L1739) · [虚拟库创建](../server/virtual-repo.c#L260)
 
 ## PR 顺序
 
@@ -35,7 +37,7 @@ Go 已能读取 SQLite 的用户、群组、组织和库权限，相邻兼容仓
 
 每步通过现有 Python 客户端发送一次写请求，在传输层捕获同一响应的原始 JSON。参数边界可直接发原始请求。每步执行后用只读连接比较分享表的行值、行数及 `NULL`，并通过权限 RPC 检查调用方看到的结果。写入对拍运行 C 对 C、C 对 Go 和 C 接管三条路径。
 
-PR 1 交付以下入口，测试负责准备副本和启动实例。`SCENARIO_SET` 支持 `personal`、`group`、`public` 和 `all`。C 对 C 设 `SEAFILE_TARGET_IMPL=c`，两个角色使用同一个锁定的 C 二进制。C 对 Go 设 `SEAFILE_TARGET_IMPL=go` 并提供 Go 二进制，入口会为待测实例传入 `--enable-share-writes`。运行环境提供基线 `pysearpc` 和 C 动态库。
+`test-share-writes` 负责准备副本和启动实例。`SCENARIO_SET` 支持 `personal`、`group`、`public` 和 `all`。C 对 C 设 `SEAFILE_TARGET_IMPL=c`，两个角色使用同一个锁定的 C 二进制。C 对 Go 设 `SEAFILE_TARGET_IMPL=go` 并提供 Go 二进制，入口会为待测实例传入 `--enable-share-writes`。运行环境提供基线 `pysearpc` 和 C 动态库。
 
 ```sh
 make -C "$SEAFILE_COMPAT_TESTS" test-share-writes \

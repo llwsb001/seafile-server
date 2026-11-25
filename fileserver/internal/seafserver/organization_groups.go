@@ -52,9 +52,14 @@ func (s *Organizations) removeOrg(ctx context.Context, args []json.RawMessage) (
 		return badOrgArgs(-1)
 	}
 	err := s.writeWithGroupDB(ctx, true, func(conn *sql.Conn) error {
-		const exclusiveUsers = `SELECT email FROM main.OrgUser member WHERE org_id = ?1 AND NOT EXISTS (
+		const exclusiveMembers = `SELECT email FROM main.OrgUser member WHERE org_id = ?1 AND NOT EXISTS (
 			SELECT 1 FROM main.OrgUser shared WHERE shared.org_id <> ?1 AND shared.email = member.email COLLATE NOCASE
 		)`
+		// Match local account lookup: prefer the exact address, then its lowercase form.
+		const exclusiveAccounts = `SELECT CASE
+			WHEN EXISTS (SELECT 1 FROM org_users.EmailUser u WHERE u.email = member.email)
+			THEN member.email ELSE lower(member.email) END
+			FROM (` + exclusiveMembers + `) member`
 		const exclusiveGroups = `SELECT group_id FROM main.OrgGroup membership WHERE org_id = ?1 AND NOT EXISTS (
 			SELECT 1 FROM main.OrgGroup shared WHERE shared.org_id <> ?1 AND shared.group_id = membership.group_id
 		)`
@@ -68,8 +73,8 @@ func (s *Organizations) removeOrg(ctx context.Context, args []json.RawMessage) (
 			return errors.New("organization group has children outside the deletion")
 		}
 		for _, query := range []string{
-			`DELETE FROM org_users.UserRole WHERE email IN (` + exclusiveUsers + `)`,
-			`DELETE FROM org_users.EmailUser WHERE email IN (` + exclusiveUsers + `)`,
+			`DELETE FROM org_users.UserRole WHERE email IN (` + exclusiveMembers + ` UNION ` + exclusiveAccounts + `)`,
+			`DELETE FROM org_users.EmailUser WHERE email IN (` + exclusiveAccounts + `)`,
 			`DELETE FROM org_groups.GroupUser WHERE group_id IN (` + exclusiveGroups + `)`,
 			`DELETE FROM org_groups.GroupStructure WHERE group_id IN (` + exclusiveGroups + `)`,
 			`DELETE FROM org_groups."Group" WHERE group_id IN (` + exclusiveGroups + `)`,

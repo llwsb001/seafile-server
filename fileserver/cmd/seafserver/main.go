@@ -83,6 +83,8 @@ func run(ctx context.Context, args []string) error {
 		}
 		defer identity.Close()
 		maps.Copy(handlers, identity.RPCHandlers())
+		cloudMode := config.Section("general").Key("cloud_mode").String()
+		maps.Copy(handlers, reader.PermissionRPCHandlers(identity, cloudMode == "true" || cloudMode == "1"))
 	}
 	listener, err := net.Listen("unix", filepath.Join(socketDir, "seafile.sock"))
 	if err != nil {

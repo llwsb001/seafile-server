@@ -1,4 +1,4 @@
-// seafserver is the read-only Go seaf-server used during the migration.
+// seafserver is the Go seaf-server used during the migration.
 package main
 
 import (
@@ -32,7 +32,7 @@ func main() {
 func run(ctx context.Context, args []string) error {
 	flags := flag.NewFlagSet("seaf-server", flag.ContinueOnError)
 	var dataDir, confDir, socketDir, ccnetDir string
-	var foreground bool
+	var foreground, enableShareWrites bool
 	flags.StringVar(&dataDir, "d", "", "seafile data directory")
 	flags.StringVar(&dataDir, "seafdir", "", "seafile data directory")
 	flags.StringVar(&confDir, "F", "", "central configuration directory")
@@ -43,11 +43,15 @@ func run(ctx context.Context, args []string) error {
 	flags.StringVar(&socketDir, "rpc-pipe-path", "", "Searpc socket directory")
 	flags.BoolVar(&foreground, "f", false, "run in the foreground")
 	flags.BoolVar(&foreground, "foreground", false, "run in the foreground")
+	flags.BoolVar(&enableShareWrites, "enable-share-writes", false, "enable ordinary SQLite share writes")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
 	if !foreground || dataDir == "" || flags.NArg() != 0 {
-		return errors.New("usage: seaf-server -f -d data-dir [-F config-dir] [-c ccnet-dir] [-p socket-dir]")
+		return errors.New("usage: seaf-server -f -d data-dir [-F config-dir] [-c ccnet-dir] [-p socket-dir] [--enable-share-writes]")
+	}
+	if enableShareWrites && ccnetDir == "" {
+		return errors.New("--enable-share-writes requires -c")
 	}
 	if confDir == "" {
 		confDir = dataDir
@@ -61,9 +65,10 @@ func run(ctx context.Context, args []string) error {
 		return fmt.Errorf("load %s: %w", confPath, err)
 	}
 	if !strings.EqualFold(config.Section("database").Key("type").String(), "sqlite") {
-		return errors.New("the read-only server requires database type sqlite")
+		return errors.New("the Go server requires database type sqlite")
 	}
-	db, err := seafserver.OpenSQLiteReadOnly(ctx, filepath.Join(dataDir, "seafile.db"))
+	dbPath := filepath.Join(dataDir, "seafile.db")
+	db, err := seafserver.OpenSQLiteReadOnly(ctx, dbPath)
 	if err != nil {
 		return err
 	}
@@ -85,6 +90,14 @@ func run(ctx context.Context, args []string) error {
 		maps.Copy(handlers, identity.RPCHandlers())
 		cloudMode := config.Section("general").Key("cloud_mode").String()
 		maps.Copy(handlers, reader.PermissionRPCHandlers(identity, cloudMode == "true" || cloudMode == "1"))
+	}
+	if enableShareWrites {
+		writer, err := seafserver.OpenShareWriter(dbPath)
+		if err != nil {
+			return err
+		}
+		defer writer.Close()
+		maps.Copy(handlers, writer.RPCHandlers())
 	}
 	listener, err := net.Listen("unix", filepath.Join(socketDir, "seafile.sock"))
 	if err != nil {

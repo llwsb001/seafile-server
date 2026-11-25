@@ -49,7 +49,6 @@ const (
 	cacheBlockMapThreshold          = 1 << 23
 	blockMapCacheExpiretime   int64 = 3600 * 24
 	fileopCleaningIntervalSec       = 3600
-	duplicateNamesCount             = 1000
 )
 
 var (
@@ -1979,7 +1978,7 @@ func checkFilesWithSameName(repo *repomgr.Repo, canonPath string, fileNames []st
 	}
 
 	for _, name := range fileNames {
-		uniqueName := genUniqueName(name, dir.Entries)
+		uniqueName := fsmgr.UniqueName(name, dir.Entries)
 		if uniqueName == "" {
 			return true
 		}
@@ -2502,7 +2501,7 @@ func addNewEntries(repo *repomgr.Repo, user string, oldDents *[]*fsmgr.SeafDiren
 		if replace {
 			uniqueName = dent.Name
 		} else {
-			uniqueName = genUniqueName(dent.Name, *oldDents)
+			uniqueName = fsmgr.UniqueName(dent.Name, *oldDents)
 		}
 		if uniqueName != "" {
 			newDent := fsmgr.NewDirent(dent.ID, uniqueName, dent.Mode, dent.Mtime, user, dent.Size)
@@ -2517,43 +2516,6 @@ func addNewEntries(repo *repomgr.Repo, user string, oldDents *[]*fsmgr.SeafDiren
 	sort.Sort(Dirents(*oldDents))
 
 	return nil
-}
-
-func genUniqueName(fileName string, entries []*fsmgr.SeafDirent) string {
-	var uniqueName string
-	var name string
-	i := 1
-	dot := strings.LastIndex(fileName, ".")
-	if dot < 0 {
-		name = fileName
-	} else {
-		name = fileName[:dot]
-	}
-	uniqueName = fileName
-	for nameExists(entries, uniqueName) && i <= duplicateNamesCount {
-		if dot < 0 {
-			uniqueName = fmt.Sprintf("%s (%d)", name, i)
-		} else {
-			uniqueName = fmt.Sprintf("%s (%d).%s", name, i, fileName[dot+1:])
-		}
-		i++
-	}
-
-	if i <= duplicateNamesCount {
-		return uniqueName
-	}
-
-	return ""
-}
-
-func nameExists(entries []*fsmgr.SeafDirent, fileName string) bool {
-	for _, entry := range entries {
-		if entry.Name == fileName {
-			return true
-		}
-	}
-
-	return false
 }
 
 func shouldIgnore(fileName string) bool {

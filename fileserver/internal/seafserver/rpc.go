@@ -28,8 +28,11 @@ func (r *Reader) RPCHandlers(config *ServerConfig) map[string]searpc.Handler {
 	return map[string]searpc.Handler{
 		"seafile_get_repo":            r.getRepo,
 		"seafile_get_commit":          r.getCommit,
+		"seafile_get_commit_list":     r.commitList(config),
 		"seafile_list_dir_by_path":    r.listDirByPath,
 		"seafile_get_file_id_by_path": r.fileIDByPath,
+		"seafile_get_dir_id_by_path":  r.dirIDByPath,
+		"seafile_get_dirent_by_path":  r.direntByPath,
 		"seafile_get_repo_owner":      r.getRepoOwner,
 		"seafile_is_repo_owner":       r.isRepoOwner,
 		"get_repo_status":             r.getRepoStatus,

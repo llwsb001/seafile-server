@@ -29,7 +29,7 @@ func main() {
 
 func run(ctx context.Context, args []string) error {
 	flags := flag.NewFlagSet("seaf-server", flag.ContinueOnError)
-	var dataDir, confDir, socketDir, ccnetDir string
+	var dataDir, confDir, socketDir, ccnetDir, pidFile string
 	var foreground, enableShareWrites, enableManagementRPCs bool
 	flags.StringVar(&dataDir, "d", "", "seafile data directory")
 	flags.StringVar(&dataDir, "seafdir", "", "seafile data directory")
@@ -39,6 +39,7 @@ func run(ctx context.Context, args []string) error {
 	flags.StringVar(&ccnetDir, "config-file", "", "ccnet configuration directory")
 	flags.StringVar(&socketDir, "p", "", "Searpc socket directory")
 	flags.StringVar(&socketDir, "rpc-pipe-path", "", "Searpc socket directory")
+	flags.StringVar(&pidFile, "P", "", "PID file path")
 	flags.BoolVar(&foreground, "f", false, "run in the foreground")
 	flags.BoolVar(&foreground, "foreground", false, "run in the foreground")
 	flags.BoolVar(&enableShareWrites, "enable-share-writes", false, "enable ordinary SQLite share writes")
@@ -148,7 +149,13 @@ func run(ctx context.Context, args []string) error {
 	if err != nil {
 		return fmt.Errorf("load Web access token settings from %s: %w", confPath, err)
 	}
-	listener, err := listenRPC(filepath.Join(socketDir, "seafile.sock"), tokenMode || enableManagementRPCs)
+	socketPath := filepath.Join(socketDir, "seafile.sock")
+	if pidFile != "" {
+		if err := clearInactiveRPCSocket(ctx, socketPath); err != nil {
+			return err
+		}
+	}
+	listener, err := listenRPC(socketPath, tokenMode || enableManagementRPCs)
 	if err != nil {
 		return err
 	}
@@ -157,6 +164,13 @@ func run(ctx context.Context, args []string) error {
 		maps.Copy(handlers, tokens.RPCHandlers())
 		stopCleanup := tokens.StartCleanup(ctx)
 		defer stopCleanup()
+	}
+	if pidFile != "" {
+		if err := os.WriteFile(pidFile, []byte(fmt.Sprint(os.Getpid())), 0644); err != nil {
+			listener.Close()
+			return fmt.Errorf("write core PID file: %w", err)
+		}
+		defer os.Remove(pidFile)
 	}
 	return searpc.Serve(ctx, listener, seafserver.RPCService, handlers)
 }

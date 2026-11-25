@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -8,10 +10,51 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"golang.org/x/sys/unix"
 	"gopkg.in/ini.v1"
 )
+
+func clearInactiveRPCSocket(ctx context.Context, path string) error {
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	stat := info.Sys().(*syscall.Stat_t)
+	if info.Mode().Type() != os.ModeSocket || stat.Uid != uint32(os.Geteuid()) {
+		return fmt.Errorf("RPC path %q already exists", path)
+	}
+	dialer := net.Dialer{Timeout: time.Second}
+	conn, err := dialer.DialContext(ctx, "unix", path)
+	if err == nil {
+		conn.Close()
+		return fmt.Errorf("RPC socket %q is already listening", path)
+	}
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if !errors.Is(err, syscall.ECONNREFUSED) {
+		return fmt.Errorf("check RPC socket %q: %w", path, err)
+	}
+	current, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !os.SameFile(info, current) {
+		return fmt.Errorf("RPC socket %q changed while checking it", path)
+	}
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
+}
 
 func webTokenSettings(data []byte, enableEnv string) (bool, int64, error) {
 	// GLib treats inline text and quotes as part of these configuration values.

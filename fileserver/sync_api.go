@@ -12,6 +12,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -1641,6 +1642,10 @@ func calculateSendObjectList(ctx context.Context, repo *repomgr.Repo, serverHead
 			return nil, ErrTimeout
 		}
 		return nil, err
+	}
+	if option.DBType == "sqlite" {
+		// The C traversal prepends each discovered object, including the root.
+		slices.Reverse(info.results)
 	}
 	return info.results, nil
 }

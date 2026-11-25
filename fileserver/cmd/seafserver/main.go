@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"maps"
+	"math"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -86,16 +87,18 @@ func run(ctx context.Context, args []string) error {
 	maps.Copy(handlers, seafserver.EventRPCHandlers())
 	quota := seafserver.NewUserQuota(db, serverConfig)
 	maps.Copy(handlers, quota.RPCHandlers())
+	var identity *seafserver.Identity
+	cloudModeValue := config.Section("general").Key("cloud_mode").String()
+	cloudMode := cloudModeValue == "true" || cloudModeValue == "1"
 	if ccnetDir != "" {
-		identity, err := seafserver.OpenIdentityReadOnly(ctx, ccnetDir)
+		identity, err = seafserver.OpenIdentityReadOnly(ctx, ccnetDir)
 		if err != nil {
 			return err
 		}
 		defer identity.Close()
 		maps.Copy(handlers, identity.RPCHandlers())
 		handlers["seafile_get_user_share_usage"] = quota.ShareUsageRPC(identity)
-		cloudMode := config.Section("general").Key("cloud_mode").String()
-		maps.Copy(handlers, reader.PermissionRPCHandlers(identity, cloudMode == "true" || cloudMode == "1"))
+		maps.Copy(handlers, reader.PermissionRPCHandlers(identity, cloudMode))
 		if enableManagementRPCs {
 			organizations, err := seafserver.OpenOrganizations(ccnetDir, identity)
 			if err != nil {
@@ -125,7 +128,16 @@ func run(ctx context.Context, args []string) error {
 		maps.Copy(handlers, reader.RepoCreationRPCHandlers(writer))
 		maps.Copy(handlers, reader.DirectoryShareRPCHandlers(writer))
 		handlers["seafile_get_upload_tmp_file_offset"] = seafserver.UploadOffsetRPC(writer)
-		if ccnetDir != "" {
+		if identity != nil {
+			copyConfig := config.Section("web_copy")
+			maxMiB := copyConfig.Key("max_size").MustInt64(0)
+			limits := seafserver.FileMoveLimits{
+				MaxFiles: copyConfig.Key("max_files").MustInt64(0),
+				MaxBytes: min(max(0, maxMiB), math.MaxInt64>>20) << 20,
+			}
+			fileHandlers, closeMoves := reader.FileWriteRPCHandlers(ctx, writer, identity, cloudMode, quota, limits)
+			defer closeMoves()
+			maps.Copy(handlers, fileHandlers)
 			groupManagement, err := seafserver.OpenGroupManagement(ccnetDir, writer)
 			if err != nil {
 				return err

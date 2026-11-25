@@ -57,6 +57,21 @@
 
 文件服务从 `DATA_DIR/seafile.db` 与 `CCNET_DIR/GroupMgr/groupmgr.db` 读取库和群组数据，也支持从 `CCNET_CONF_DIR` 取得 ccnet 目录。实际 HTTP `GET /protocol-version` 返回版本 2 后即可执行 v7 场景。需要从核心签发持久同步令牌时，启动核心时额外传入 `--enable-management-rpcs`。
 
+### 用 Linux controller 启动和切换
+
+在现有 Linux 发行物的 `seafile/bin` 目录准备 `seaf-server-go` 和 `fileserver`，并将该目录加入启动环境的 `PATH`。保留同发行物中的 C `seaf-server` 供回退。下面的命令从服务端仓库根目录构建两个 Go 二进制。
+
+```sh
+go -C fileserver build -o "$SEAFILE_BIN_DIR/seaf-server-go" ./cmd/seafserver
+go -C fileserver build -o "$SEAFILE_BIN_DIR/fileserver" .
+```
+
+SQLite 默认启动 C 组合。将 `[fileserver] use_go_fileserver` 设为 `true` 后，通过原有命令启动 `seafile-controller`。Controller 等 Go 核心的私有 RPC socket 就绪，再启动 HTTP fileserver。核心使用管理和分享写入 RPC，两个 Go 进程和 Seahub 需要同一服务账号，启动环境需提供 `JWT_PRIVATE_KEY`。
+
+运行期间 fileserver 退出时由 controller 重新启动。核心退出时，controller 先停止 fileserver，再依次恢复核心和 HTTP。收到停止信号时也先停 HTTP，再停核心。启动日志写入 `controller.log`、`seafile.log` 和 `fileserver.log`。启用 `SEAFILE_LOG_TO_STDOUT=true` 时，通过进程的标准输出查看。
+
+在隔离副本中用兼容仓库的 `make test-fileserver-controller` 验证默认 C 启动、Go HTTP、私有 socket、进程恢复、错误诊断及回退。切回 C 时先停止当前组合，将 `use_go_fileserver` 设为 `false`，再用相同数据目录启动 controller。
+
 ### 对拍与接管
 
 1. **跑现有回归。** 在 Linux 按阶段 4 报告准备锁定的 C 二进制、`pysearpc` 和 v1 归档，保留 v1–v5 的验收入口。v6 用 `test-repo-create` 跑全部库写入场景。服务端现有 [上传与更新](../tests/test_file_operation/test_upload_and_update.py)、[下载响应头](../tests/test_file_operation/test_download_headers.py)、[ZIP](../tests/test_file_operation/test_zip_download.py)、[虚拟库合并](../tests/test_file_operation/test_merge_virtual_repo.py) 和 [大文件](../tests/test_file_operation/test_upload_large_files.py) 测试作为 v7 场景来源。 [现有验收命令](go-migration-sqlite-stage4-acceptance.md#复现命令)

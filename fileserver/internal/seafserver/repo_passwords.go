@@ -1,6 +1,7 @@
 package seafserver
 
 import (
+	"bytes"
 	"context"
 	"crypto/subtle"
 	"encoding/hex"
@@ -27,6 +28,16 @@ type cachedRepoKey struct {
 	key       []byte
 	iv        []byte
 	expiresAt int64
+}
+
+func (p *RepoPasswords) copyKey(repo, user string) ([]byte, []byte) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	key, exists := p.keys[repoPasswordID{repo: repo, user: user}]
+	if !exists || time.Now().Unix() >= key.expiresAt {
+		return nil, nil
+	}
+	return bytes.Clone(key.key), bytes.Clone(key.iv)
 }
 
 // RepoPasswords stores process-local decryption keys for encrypted repositories.

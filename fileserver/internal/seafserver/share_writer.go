@@ -37,9 +37,14 @@ func (s *ShareWriter) Close() error {
 // RPCHandlers exposes share mutations when the caller enables SQLite writes.
 func (s *ShareWriter) RPCHandlers() map[string]searpc.Handler {
 	return map[string]searpc.Handler{
-		"seafile_add_share":    s.addShare,
-		"set_share_permission": s.setSharePermission,
-		"seafile_remove_share": s.removeShare,
+		"seafile_add_share":          s.addShare,
+		"set_share_permission":       s.setSharePermission,
+		"seafile_remove_share":       s.removeShare,
+		"seafile_group_share_repo":   s.addGroupShare,
+		"set_group_repo_permission":  s.setGroupPermission,
+		"seafile_group_unshare_repo": s.removeGroupShare,
+		"set_inner_pub_repo":         s.setPublicShare,
+		"unset_inner_pub_repo":       s.unsetPublicShare,
 	}
 }
 
@@ -153,4 +158,74 @@ func (s *ShareWriter) removeShare(ctx context.Context, args []json.RawMessage) (
 	}
 	const remove = `DELETE FROM SharedRepo WHERE repo_id = ? AND from_email = ? AND to_email = ?`
 	return s.write(ctx, *repoID, nil, remove, *repoID, *from, *to)
+}
+
+func (s *ShareWriter) addGroupShare(ctx context.Context, args []json.RawMessage) (any, *searpc.RPCError) {
+	repoID, groupID := stringArgument(args, 0), intArgument(args, 1)
+	user, permission := stringArgument(args, 2), stringArgument(args, 3)
+	if repoID == nil || groupID <= 0 || user == nil || permission == nil {
+		return invalidShareArguments("Bad input argument")
+	}
+	if !validRepoID(*repoID) {
+		return invalidShareArguments("Invalid repo id")
+	}
+	if !validSharePermission(*permission) {
+		return invalidShareArguments("Invalid permission parameter")
+	}
+	const insert = `INSERT INTO RepoGroup (repo_id, group_id, user_name, permission) VALUES (?, ?, ?, ?)`
+	return s.write(ctx, *repoID, nil, insert, *repoID, groupID, *user, *permission)
+}
+
+func (s *ShareWriter) setGroupPermission(ctx context.Context, args []json.RawMessage) (any, *searpc.RPCError) {
+	groupID, repoID, permission := intArgument(args, 0), stringArgument(args, 1), stringArgument(args, 2)
+	if repoID == nil || permission == nil {
+		return invalidShareArguments("Arguments should not be empty")
+	}
+	if !validRepoID(*repoID) {
+		return invalidShareArguments("Invalid repo id")
+	}
+	if !validSharePermission(*permission) {
+		return invalidShareArguments("Invalid permission parameter")
+	}
+	const update = `UPDATE RepoGroup SET permission = ? WHERE repo_id = ? AND group_id = ?`
+	return s.write(ctx, *repoID, nil, update, *permission, *repoID, groupID)
+}
+
+func (s *ShareWriter) removeGroupShare(ctx context.Context, args []json.RawMessage) (any, *searpc.RPCError) {
+	repoID, groupID, user := stringArgument(args, 0), intArgument(args, 1), stringArgument(args, 2)
+	if repoID == nil || user == nil {
+		return invalidShareArguments("User name and repo id can not be NULL")
+	}
+	if !validRepoID(*repoID) {
+		return invalidShareArguments("Invalid repo id")
+	}
+	const remove = `DELETE FROM RepoGroup WHERE group_id = ? AND repo_id = ?`
+	return s.write(ctx, *repoID, nil, remove, groupID, *repoID)
+}
+
+const errPublicShareWrite = 500
+
+func (s *ShareWriter) setPublicShare(ctx context.Context, args []json.RawMessage) (any, *searpc.RPCError) {
+	repoID := stringArgument(args, 0)
+	if repoID == nil {
+		return invalidShareArguments("Bad args")
+	}
+	if !validRepoID(*repoID) {
+		return invalidShareArguments("Invalid repo id")
+	}
+	// The C public-share RPC binds a missing or null permission as SQL NULL.
+	const replace = `REPLACE INTO InnerPubRepo (repo_id, permission) VALUES (?, ?)`
+	return s.write(ctx, *repoID, rpcError(errPublicShareWrite, "Internal error"), replace, *repoID, stringArgument(args, 1))
+}
+
+func (s *ShareWriter) unsetPublicShare(ctx context.Context, args []json.RawMessage) (any, *searpc.RPCError) {
+	repoID := stringArgument(args, 0)
+	if repoID == nil {
+		return invalidShareArguments("Bad args")
+	}
+	if !validRepoID(*repoID) {
+		return invalidShareArguments("Invalid repo id")
+	}
+	const remove = `DELETE FROM InnerPubRepo WHERE repo_id = ?`
+	return s.write(ctx, *repoID, rpcError(errPublicShareWrite, "Internal error"), remove, *repoID)
 }

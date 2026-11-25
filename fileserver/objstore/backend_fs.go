@@ -2,9 +2,12 @@
 package objstore
 
 import (
+	"errors"
 	"io"
 	"os"
 	"path"
+	"runtime"
+	"syscall"
 )
 
 type fsBackend struct {
@@ -95,6 +98,17 @@ func (b *fsBackend) write(repoID string, objID string, r io.Reader, sync bool) e
 	}
 
 	success = true
+	if sync && runtime.GOOS == "linux" {
+		dir, err := os.Open(parentDir)
+		if err != nil {
+			return err
+		}
+		defer dir.Close()
+		// Match the C store on filesystems that do not support directory sync.
+		if err := dir.Sync(); err != nil && !errors.Is(err, syscall.EINVAL) {
+			return err
+		}
+	}
 	return nil
 }
 

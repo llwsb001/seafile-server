@@ -90,16 +90,20 @@ func (v configValue) string() (string, bool) {
 	if !v.found || !utf8.ValidString(v.text) {
 		return "", false
 	}
-	return strings.Trim(keyFileString(v.text), keyFileSpace), true
+	decoded, valid := keyFileString(v.text)
+	return strings.Trim(decoded, keyFileSpace), valid
 }
 
-func keyFileString(value string) string {
+func keyFileString(value string) (string, bool) {
 	var decoded strings.Builder
 	for len(value) > 0 {
 		before, rest, escaped := strings.Cut(value, "\\")
 		decoded.WriteString(before)
-		if !escaped || rest == "" {
+		if !escaped {
 			break
+		}
+		if rest == "" {
+			return "", false
 		}
 		switch rest[0] {
 		case 's':
@@ -113,12 +117,11 @@ func keyFileString(value string) string {
 		case '\\':
 			decoded.WriteByte('\\')
 		default:
-			decoded.WriteByte('\\')
-			decoded.WriteByte(rest[0])
+			return "", false
 		}
 		value = rest[1:]
 	}
-	return decoded.String()
+	return decoded.String(), true
 }
 
 func (v configValue) int() int {

@@ -116,6 +116,7 @@ func run(ctx context.Context, args []string) error {
 		defer writer.Close()
 		maps.Copy(handlers, writer.RPCHandlers())
 	}
+	var passwords *seafserver.RepoPasswords
 	if enableManagementRPCs {
 		writer, err := seafserver.OpenSQLiteReadWrite(dbPath)
 		if err != nil {
@@ -152,7 +153,7 @@ func run(ctx context.Context, args []string) error {
 			maps.Copy(handlers, accounts.RPCHandlers())
 		}
 
-		passwords := seafserver.NewRepoPasswords(reader)
+		passwords = seafserver.NewRepoPasswords(reader)
 		maps.Copy(handlers, passwords.RPCHandlers())
 		stopPasswords := passwords.StartCleanup(ctx)
 		defer stopPasswords()
@@ -165,8 +166,15 @@ func run(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
+	defer listener.Close()
 	if tokenMode {
-		tokens := seafserver.NewWebAccessTokens(tokenTTL)
+		zips, err := seafserver.NewZipDownloads(ctx, dataDir, reader, serverConfig, passwords)
+		if err != nil {
+			return fmt.Errorf("initialize ZIP downloads: %w", err)
+		}
+		defer zips.Close()
+		maps.Copy(handlers, zips.RPCHandlers())
+		tokens := zips.WebAccessTokens(tokenTTL)
 		maps.Copy(handlers, tokens.RPCHandlers())
 		stopCleanup := tokens.StartCleanup(ctx)
 		defer stopCleanup()

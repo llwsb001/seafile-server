@@ -36,6 +36,7 @@ import (
 	"github.com/haiwen/seafile-server/fileserver/diff"
 	"github.com/haiwen/seafile-server/fileserver/fsmgr"
 	"github.com/haiwen/seafile-server/fileserver/internal/seafserver"
+	"github.com/haiwen/seafile-server/fileserver/internal/ziparchive"
 	"github.com/haiwen/seafile-server/fileserver/option"
 	"github.com/haiwen/seafile-server/fileserver/repomgr"
 	"github.com/haiwen/seafile-server/fileserver/utils"
@@ -176,13 +177,13 @@ func accessCB(rsp http.ResponseWriter, r *http.Request) *appError {
 		return &appError{nil, msg, http.StatusForbidden}
 	}
 
+	rsp.Header().Set("ETag", objID)
 	if _, ok := r.Header["If-Modified-Since"]; ok {
-		return &appError{nil, "", http.StatusNotModified}
+		rsp.WriteHeader(http.StatusNotModified)
+		return nil
 	}
 
-	now := time.Now()
-	rsp.Header().Set("ETag", objID)
-	rsp.Header().Set("Last-Modified", now.Format("Mon, 2 Jan 2006 15:04:05 GMT"))
+	rsp.Header().Set("Last-Modified", time.Now().UTC().Format(http.TimeFormat))
 	rsp.Header().Set("Cache-Control", "max-age=3600")
 
 	ranges := r.Header["Range"]
@@ -222,7 +223,7 @@ func accessCB(rsp http.ResponseWriter, r *http.Request) *appError {
 
 func parseCryptKey(rsp http.ResponseWriter, repoID string, user string, version int) (*seafileCrypt, *appError) {
 	key, err := rpcclient.Call("seafile_get_decrypt_key", repoID, user)
-	if err != nil {
+	if err != nil || key == nil {
 		errMessage := "Repo is encrypted. Please provide password to view it."
 		return nil, &appError{nil, errMessage, http.StatusBadRequest}
 	}
@@ -274,7 +275,11 @@ func accessV2CB(rsp http.ResponseWriter, r *http.Request) *appError {
 	rpath := getCanonPath(filePath)
 	fileName := filepath.Base(rpath)
 
-	op := r.URL.Query().Get("op")
+	query := r.URL.Query()
+	if !query.Has("op") {
+		return &appError{nil, "No operation\n", http.StatusBadRequest}
+	}
+	op := query.Get("op")
 	if op != "view" && op != "download" {
 		msg := "Operation is neither view or download\n"
 		return &appError{nil, msg, http.StatusBadRequest}
@@ -301,15 +306,16 @@ func accessV2CB(rsp http.ResponseWriter, r *http.Request) *appError {
 		return &appError{nil, msg, http.StatusBadRequest}
 	}
 
-	fileID, _, err := fsmgr.GetObjIDByPath(repo.StoreID, repo.RootID, rpath)
-	if err != nil {
+	fileID, mode, err := fsmgr.GetObjIDByPath(repo.StoreID, repo.RootID, rpath)
+	if err != nil || !fsmgr.IsRegular(mode) {
 		msg := "Invalid file_path\n"
 		return &appError{nil, msg, http.StatusBadRequest}
 	}
 
 	etag := r.Header.Get("If-None-Match")
 	if etag == fileID {
-		return &appError{nil, "", http.StatusNotModified}
+		rsp.WriteHeader(http.StatusNotModified)
+		return nil
 	}
 
 	rsp.Header().Set("ETag", fileID)
@@ -498,7 +504,8 @@ func doFileRange(rsp http.ResponseWriter, r *http.Request, repo *repomgr.Repo, f
 	if !ok {
 		conRange := fmt.Sprintf("bytes */%d", file.FileSize)
 		rsp.Header().Set("Content-Range", conRange)
-		return &appError{nil, "", http.StatusRequestedRangeNotSatisfiable}
+		rsp.WriteHeader(http.StatusRequestedRangeNotSatisfiable)
+		return nil
 	}
 
 	rsp.Header().Set("Accept-Ranges", "bytes")
@@ -518,6 +525,9 @@ func doFileRange(rsp http.ResponseWriter, r *http.Request, repo *repomgr.Repo, f
 	rsp.Header().Set("Content-Range", conRange)
 
 	rsp.WriteHeader(http.StatusPartialContent)
+	if r.Method == http.MethodHead {
+		return nil
+	}
 
 	var blkSize []uint64
 	if file.FileSize > cacheBlockMapThreshold {
@@ -639,53 +649,34 @@ func doFileRange(rsp http.ResponseWriter, r *http.Request, repo *repomgr.Repo, f
 }
 
 func parseRange(byteRanges string, fileSize uint64) (uint64, uint64, bool) {
-	start := strings.Index(byteRanges, "=")
-	end := strings.Index(byteRanges, "-")
-
-	if end < 0 {
+	_, limits, ok := strings.Cut(byteRanges, "=")
+	if !ok || fileSize == 0 {
 		return 0, 0, false
 	}
-
-	var startByte, endByte uint64
-
-	if start+1 == end {
-		retByte, err := strconv.ParseUint(byteRanges[end+1:], 10, 64)
-		if err != nil || retByte == 0 {
-			return 0, 0, false
-		}
-		startByte = fileSize - retByte
-		endByte = fileSize - 1
-	} else if end+1 == len(byteRanges) {
-		firstByte, err := strconv.ParseUint(byteRanges[start+1:end], 10, 64)
-		if err != nil {
-			return 0, 0, false
-		}
-
-		startByte = firstByte
-		endByte = fileSize - 1
-	} else {
-		firstByte, err := strconv.ParseUint(byteRanges[start+1:end], 10, 64)
-		if err != nil {
-			return 0, 0, false
-		}
-		lastByte, err := strconv.ParseUint(byteRanges[end+1:], 10, 64)
-		if err != nil {
-			return 0, 0, false
-		}
-
-		if lastByte > fileSize-1 {
-			lastByte = fileSize - 1
-		}
-
-		startByte = firstByte
-		endByte = lastByte
-	}
-
-	if startByte > endByte {
+	first, last, ok := strings.Cut(limits, "-")
+	if !ok {
 		return 0, 0, false
 	}
-
-	return startByte, endByte, true
+	if first == "" {
+		suffix, err := strconv.ParseUint(last, 10, 64)
+		if err != nil || suffix == 0 || suffix > fileSize {
+			return 0, 0, false
+		}
+		return fileSize - suffix, fileSize - 1, true
+	}
+	start, err := strconv.ParseUint(first, 10, 64)
+	if err != nil || start >= fileSize {
+		return 0, 0, false
+	}
+	end := fileSize - 1
+	if last != "" {
+		lastByte, err := strconv.ParseUint(last, 10, 64)
+		if err != nil || lastByte < start {
+			return 0, 0, false
+		}
+		end = min(lastByte, end)
+	}
+	return start, end, true
 }
 
 func setCommonHeaders(rsp http.ResponseWriter, r *http.Request, operation, fileName string) {
@@ -702,15 +693,14 @@ func setCommonHeaders(rsp http.ResponseWriter, r *http.Request, operation, fileN
 		rsp.Header().Set("Content-Type", "application/octet-stream")
 	}
 
-	var contFileName string
+	disposition := "inline"
 	if operation == "download" || operation == "download-link" ||
 		operation == "downloadblks" {
-		// Since the file name downloaded by safari will be garbled, we need to encode the filename.
-		// Safari cannot parse unencoded utf8 characters.
-		contFileName = fmt.Sprintf("attachment;filename*=utf-8''%s;filename=\"%s\"", url.PathEscape(fileName), sanitizeHeaderFilename(fileName))
-	} else {
-		contFileName = fmt.Sprintf("inline;filename*=utf-8''%s;filename=\"%s\"", url.PathEscape(fileName), sanitizeHeaderFilename(fileName))
+		disposition = "attachment"
 	}
+	// Encode the extended parameter as percent-escaped UTF-8, with an ASCII fallback.
+	encodedName := strings.ReplaceAll(url.QueryEscape(fileName), "+", "%20")
+	contFileName := fmt.Sprintf("%s;filename*=utf-8''%s;filename=\"%s\"", disposition, encodedName, sanitizeHeaderFilename(fileName))
 	rsp.Header().Set("Content-Disposition", contFileName)
 
 	if fileType != "image/jpg" {
@@ -780,11 +770,11 @@ func accessBlksCB(rsp http.ResponseWriter, r *http.Request) *appError {
 	id := accessInfo.objID
 
 	if _, ok := r.Header["If-Modified-Since"]; ok {
-		return &appError{nil, "", http.StatusNotModified}
+		rsp.WriteHeader(http.StatusNotModified)
+		return nil
 	}
 
-	now := time.Now()
-	rsp.Header().Set("Last-Modified", now.Format("Mon, 2 Jan 2006 15:04:05 GMT"))
+	rsp.Header().Set("Last-Modified", time.Now().UTC().Format(http.TimeFormat))
 	rsp.Header().Set("Cache-Control", "max-age=3600")
 
 	repo := repomgr.Get(repoID)
@@ -868,7 +858,7 @@ func doBlock(rsp http.ResponseWriter, r *http.Request, repo *repomgr.Repo, fileI
 
 func accessZipCB(rsp http.ResponseWriter, r *http.Request) *appError {
 	parts := strings.Split(r.URL.Path[1:], "/")
-	if len(parts) != 2 {
+	if len(parts) < 2 || (option.DBType == "sqlite" && len(parts) != 2) {
 		msg := "Invalid URL"
 		return &appError{nil, msg, http.StatusBadRequest}
 	}
@@ -876,6 +866,9 @@ func accessZipCB(rsp http.ResponseWriter, r *http.Request) *appError {
 
 	accessInfo, err := parseWebaccessInfo(token)
 	if err != nil {
+		if option.DBType == "sqlite" && err.Code == http.StatusForbidden {
+			err.Message += "\n"
+		}
 		return err
 	}
 
@@ -888,6 +881,10 @@ func accessZipCB(rsp http.ResponseWriter, r *http.Request) *appError {
 		op != "download-multi" && op != "download-multi-link" {
 		msg := "Operation does not match access token"
 		return &appError{nil, msg, http.StatusForbidden}
+	}
+
+	if option.DBType == "sqlite" {
+		return downloadPreparedZIP(rsp, r, token, accessInfo)
 	}
 
 	if _, ok := r.Header["If-Modified-Since"]; ok {
@@ -930,6 +927,10 @@ func downloadZipFile(rsp http.ResponseWriter, r *http.Request, data, repoID, use
 
 	ar := zip.NewWriter(rsp)
 	defer ar.Close()
+	archive := ziparchive.Writer{Archive: ar, Source: fileServerZipSource{}, Repo: repo}
+	if cryptKey != nil {
+		archive.Decode = cryptKey.decrypt
+	}
 
 	if op == "download-dir" || op == "download-dir-link" {
 		dirName, ok := obj["dir_name"].(string)
@@ -953,7 +954,7 @@ func downloadZipFile(rsp http.ResponseWriter, r *http.Request, data, repoID, use
 		rsp.Header().Set("Content-Disposition", contFileName)
 		rsp.Header().Set("Content-Type", "application/octet-stream")
 
-		err := packDir(ar, repo, objID, dirName, cryptKey)
+		err := archive.Directory(r.Context(), objID, dirName)
 		if err != nil {
 			log.Errorf("failed to pack dir %s: %v", dirName, err)
 			return nil
@@ -972,19 +973,18 @@ func downloadZipFile(rsp http.ResponseWriter, r *http.Request, data, repoID, use
 		rsp.Header().Set("Content-Disposition", contFileName)
 		rsp.Header().Set("Content-Type", "application/octet-stream")
 
-		fileList := []string{}
+		names := make(map[string]struct{}, len(dirList))
 		for _, v := range dirList {
-			uniqueName := genUniqueFileName(v.Name, fileList)
-			fileList = append(fileList, uniqueName)
+			uniqueName := ziparchive.UniqueName(v.Name, names)
 			if fsmgr.IsDir(v.Mode) {
-				if err := packDir(ar, repo, v.ID, uniqueName, cryptKey); err != nil {
+				if err := archive.Directory(r.Context(), v.ID, uniqueName); err != nil {
 					if !isNetworkErr(err) {
 						log.Errorf("failed to pack dir %s: %v", v.Name, err)
 					}
 					return nil
 				}
 			} else {
-				if err := packFiles(ar, &v, repo, "", uniqueName, cryptKey); err != nil {
+				if err := archive.File(r.Context(), &v, uniqueName); err != nil {
 					if !isNetworkErr(err) {
 						log.Errorf("failed to pack file %s: %v", v.Name, err)
 					}
@@ -995,39 +995,6 @@ func downloadZipFile(rsp http.ResponseWriter, r *http.Request, data, repoID, use
 	}
 
 	return nil
-}
-
-func genUniqueFileName(fileName string, fileList []string) string {
-	var uniqueName string
-	var name string
-	i := 1
-	dot := strings.LastIndex(fileName, ".")
-	if dot < 0 {
-		name = fileName
-	} else {
-		name = fileName[:dot]
-	}
-	uniqueName = fileName
-
-	for nameInFileList(uniqueName, fileList) {
-		if dot < 0 {
-			uniqueName = fmt.Sprintf("%s (%d)", name, i)
-		} else {
-			uniqueName = fmt.Sprintf("%s (%d).%s", name, i, fileName[dot+1:])
-		}
-		i++
-	}
-
-	return uniqueName
-}
-
-func nameInFileList(fileName string, fileList []string) bool {
-	for _, name := range fileList {
-		if name == fileName {
-			return true
-		}
-	}
-	return false
 }
 
 func parseDirFilelist(repo *repomgr.Repo, obj map[string]interface{}) ([]fsmgr.SeafDirent, error) {
@@ -1087,95 +1054,6 @@ func parseDirFilelist(repo *repomgr.Repo, obj map[string]interface{}) ([]fsmgr.S
 	}
 
 	return direntList, nil
-}
-
-func packDir(ar *zip.Writer, repo *repomgr.Repo, dirID, dirPath string, cryptKey *seafileCrypt) error {
-	dirent, err := fsmgr.GetSeafdir(repo.StoreID, dirID)
-	if err != nil {
-		err := fmt.Errorf("failed to get dir for zip: %v", err)
-		return err
-	}
-
-	if dirent.Entries == nil {
-		fileDir := filepath.Join(dirPath)
-		fileDir = strings.TrimLeft(fileDir, "/")
-		_, err := ar.Create(fileDir + "/")
-		if err != nil {
-			err := fmt.Errorf("failed to create zip dir: %v", err)
-			return err
-		}
-
-		return nil
-	}
-
-	entries := dirent.Entries
-
-	for _, v := range entries {
-		fileDir := filepath.Join(dirPath, v.Name)
-		fileDir = strings.TrimLeft(fileDir, "/")
-		if fsmgr.IsDir(v.Mode) {
-			if err := packDir(ar, repo, v.ID, fileDir, cryptKey); err != nil {
-				return err
-			}
-		} else {
-			if err := packFiles(ar, v, repo, dirPath, v.Name, cryptKey); err != nil {
-				return err
-			}
-		}
-	}
-
-	return nil
-}
-
-func packFiles(ar *zip.Writer, dirent *fsmgr.SeafDirent, repo *repomgr.Repo, parentPath, baseName string, cryptKey *seafileCrypt) error {
-	file, err := fsmgr.GetSeafile(repo.StoreID, dirent.ID)
-	if err != nil {
-		err := fmt.Errorf("failed to get seafile : %v", err)
-		return err
-	}
-
-	filePath := filepath.Join(parentPath, baseName)
-	filePath = strings.TrimLeft(filePath, "/")
-
-	fileHeader := new(zip.FileHeader)
-	fileHeader.Name = filePath
-	fileHeader.Modified = time.Unix(dirent.Mtime, 0)
-	fileHeader.Method = zip.Deflate
-	zipFile, err := ar.CreateHeader(fileHeader)
-	if err != nil {
-		err := fmt.Errorf("failed to create zip file : %v", err)
-		return err
-	}
-
-	if cryptKey != nil {
-		for _, blkID := range file.BlkIDs {
-			var buf bytes.Buffer
-			err := blockmgr.Read(repo.StoreID, blkID, &buf)
-			if err != nil {
-				err := fmt.Errorf("failed to read block %s: %v", blkID, err)
-				return err
-			}
-			decoded, err := cryptKey.decrypt(buf.Bytes())
-			if err != nil {
-				err := fmt.Errorf("failed to decrypt block %s: %v", blkID, err)
-				return err
-			}
-			_, err = zipFile.Write(decoded)
-			if err != nil {
-				return err
-			}
-		}
-		return nil
-	}
-
-	for _, blkID := range file.BlkIDs {
-		err := blockmgr.Read(repo.StoreID, blkID, zipFile)
-		if err != nil {
-			return err
-		}
-	}
-
-	return nil
 }
 
 type recvData struct {
@@ -1748,7 +1626,7 @@ func clearTmpFile(fsm *recvData, parentDir string) {
 func parseUploadHeaders(r *http.Request) (*recvData, *appError) {
 	tokenLen := 36
 	parts := strings.Split(r.URL.Path[1:], "/")
-	if len(parts) < 2 {
+	if len(parts) != 2 {
 		msg := "Invalid URL"
 		return nil, &appError{nil, msg, http.StatusBadRequest}
 	}
@@ -4125,14 +4003,14 @@ func accessLinkCB(rsp http.ResponseWriter, r *http.Request) *appError {
 		return appErr
 	}
 
+	if info.ShareType != "f" {
+		msg := "Link type mismatch"
+		return &appError{nil, msg, http.StatusBadRequest}
+	}
 	if info.FilePath == "" {
 		msg := "Internal server error\n"
 		err := fmt.Errorf("failed to get file_path by token %s", token)
 		return &appError{err, msg, http.StatusInternalServerError}
-	}
-	if info.ShareType != "f" {
-		msg := "Link type mismatch"
-		return &appError{nil, msg, http.StatusBadRequest}
 	}
 
 	repoID := info.RepoID
@@ -4155,8 +4033,8 @@ func accessLinkCB(rsp http.ResponseWriter, r *http.Request) *appError {
 
 	user, _ := repomgr.GetRepoOwner(repoID)
 
-	fileID, _, err := fsmgr.GetObjIDByPath(repo.StoreID, repo.RootID, filePath)
-	if err != nil {
+	fileID, mode, err := fsmgr.GetObjIDByPath(repo.StoreID, repo.RootID, filePath)
+	if err != nil || !fsmgr.IsRegular(mode) {
 		msg := "Invalid file_path\n"
 		return &appError{nil, msg, http.StatusBadRequest}
 	}
@@ -4164,7 +4042,8 @@ func accessLinkCB(rsp http.ResponseWriter, r *http.Request) *appError {
 	// Check for file changes by comparing the ETag in the If-None-Match header with the file ID. Set no-cache to allow clients to validate file changes before using the cache.
 	etag := r.Header.Get("If-None-Match")
 	if etag == fileID {
-		return &appError{nil, "", http.StatusNotModified}
+		rsp.WriteHeader(http.StatusNotModified)
+		return nil
 	}
 
 	rsp.Header().Set("ETag", fileID)

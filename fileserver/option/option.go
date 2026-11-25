@@ -355,7 +355,11 @@ func LoadSeahubConfig() error {
 func LoadDBOption(centralDir string) (*DBOption, error) {
 	dbOpt, err := loadDBOptionFromFile(centralDir)
 	if err != nil {
-		log.Warnf("failed to load database config: %v", err)
+		return nil, err
+	}
+	if dbOpt.DBEngine == "sqlite" {
+		DBType = dbOpt.DBEngine
+		return dbOpt, nil
 	}
 	dbOpt = loadDBOptionFromEnv(dbOpt)
 
@@ -395,6 +399,10 @@ func loadDBOptionFromFile(centralDir string) (*DBOption, error) {
 	key, err := section.GetKey("type")
 	if err == nil {
 		dbEngine = key.String()
+	}
+	if strings.EqualFold(dbEngine, "sqlite") {
+		dbOpt.DBEngine = "sqlite"
+		return dbOpt, nil
 	}
 	if dbEngine != "mysql" {
 		return nil, fmt.Errorf("unsupported database %s.", dbEngine)

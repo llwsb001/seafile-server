@@ -80,6 +80,8 @@ func run(ctx context.Context, args []string) error {
 	reader := seafserver.NewReader(db, dataDir)
 	serverConfig := seafserver.NewServerConfig(db, confData)
 	handlers := reader.RPCHandlers(serverConfig)
+	quota := seafserver.NewUserQuota(db, serverConfig)
+	maps.Copy(handlers, quota.RPCHandlers())
 	maps.Copy(handlers, seafserver.EventRPCHandlers())
 	if ccnetDir != "" {
 		identity, err := seafserver.OpenIdentityReadOnly(ctx, ccnetDir)
@@ -88,6 +90,7 @@ func run(ctx context.Context, args []string) error {
 		}
 		defer identity.Close()
 		maps.Copy(handlers, identity.RPCHandlers())
+		handlers["seafile_get_user_share_usage"] = quota.ShareUsageRPC(identity)
 		cloudMode := config.Section("general").Key("cloud_mode").String()
 		maps.Copy(handlers, reader.PermissionRPCHandlers(identity, cloudMode == "true" || cloudMode == "1"))
 	}
@@ -106,6 +109,7 @@ func run(ctx context.Context, args []string) error {
 		}
 		defer writer.Close()
 		maps.Copy(handlers, serverConfig.RPCHandlers(writer))
+		maps.Copy(handlers, quota.ManagementRPCHandlers(writer))
 	}
 	tokenMode, tokenTTL, err := webTokenSettings(confData, os.Getenv("ENABLE_GO_FILESERVER"))
 	if err != nil {

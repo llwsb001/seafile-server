@@ -43,6 +43,7 @@ type Commit struct {
 	Conflict       int    `json:"conflict,omitempty"`
 	NewMerge       int    `json:"new_merge,omitempty"`
 	Repaired       int    `json:"repaired,omitempty"`
+	NoLocalHistory int    `json:"no_local_history,omitempty"`
 }
 
 var store *objstore.ObjectStore

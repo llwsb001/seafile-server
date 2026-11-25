@@ -41,6 +41,13 @@
 | 14 | 验证真实写请求的分支通知及事件。复用已有 `notification-server` 发送和接收代码。 | 7、9、12 | 用实际 HTTP 提交触发普通更新和合并，核对 repo ID、commit ID、事件次数与顺序、JWT 和接收端响应。对象写入失败、回滚和首次建库各有独立预期。 |
 | 15 | 迁移 Seahub 主路径用到的基础文件写 RPC。优先覆盖新建空文件／目录、递归建目录、删除和改名移动，复用已验收的对象与分支写入。 | 7 | 用现有 Python 客户端对拍对应入口，覆盖目标冲突、非法路径、权限、提交关系和 C 接管。核对真实 HTTP 回归中仍调用的辅助 RPC，运行记录标明每个入口由哪个核心处理。 |
 | 16 | 验收真实桌面客户端，用锁定版本启动两个独立客户端实例。 | 12–14 | 实际完成克隆、双向增量、并发冲突、断线重连以及令牌撤销后的重试。从两端读回相同文件内容，记录客户端版本、场景和观察到的分支。 |
+
+### 任务 15 的 Seahub 调用范围
+
+SQLite Go 核心在启用管理 RPC 并配置 ccnet 后，可在私有 socket 处理普通 v1 库的空文件、建目录、递归建目录、删除、批量删除、改名及库内移动。核心校验写权限和库状态，通过同一分支发布入口记录新提交。目录 ID、提交列表与目录项读取走 Go 核心，供 Seahub 在写前定位目录及处理重名，在写后重读元数据。兼容仓库用 Seahub 使用的 Python RPC 客户端复放这些入口，再让 C 接管同一数据库和对象目录。 [新建入口](https://github.com/haiwen/seahub/blob/62ab79b210c45c77c32f3fc0d7eeaf68c710f5ab/seahub/api2/endpoints/file.py#L160-L214) · [重名检查](https://github.com/haiwen/seahub/blob/62ab79b210c45c77c32f3fc0d7eeaf68c710f5ab/seahub/utils/__init__.py#L363-L376)
+
+- 跨库移动仍需接入。锁定 Seahub 的单文件移动向同一 RPC 传不同的源、目标库，批量移动还读取后台任务 ID。Go 基础入口对跨库调用返回错误。后续验收同用户普通库同步及后台移动、源和目标分别授权、目标冲突、复制或删除失败后的恢复，并由 C 接管两个库。 [单文件移动](https://github.com/haiwen/seahub/blob/62ab79b210c45c77c32f3fc0d7eeaf68c710f5ab/seahub/api2/endpoints/file.py#L350-L428) · [批量移动](https://github.com/haiwen/seahub/blob/62ab79b210c45c77c32f3fc0d7eeaf68c710f5ab/seahub/api2/endpoints/repos_batch.py#L1290-L1351)
+- 可写共享目录仍需接入。锁定 Seahub 的共享库列表带原始分享项库 ID 进入库页面，同一页面以该 ID 发起文件创建。Go 基础入口对虚拟库写调用返回错误。后续随虚拟库写入验证原库和虚拟库的分支关系、同源分享传播和 C 接管。 [共享库页面链接](https://github.com/haiwen/seahub/blob/62ab79b210c45c77c32f3fc0d7eeaf68c710f5ab/frontend/src/pages/app/main-panel/shared-libs/item.js#L214) · [页面创建文件](https://github.com/haiwen/seahub/blob/62ab79b210c45c77c32f3fc0d7eeaf68c710f5ab/frontend/src/pages/app/main-panel/lib-content-view/lib-content-view.js#L1429)
 | 17 | 接入现有 Linux 启动方式的 SQLite Go 组合。联动 controller、核心和 fileserver 的启动参数、端口、管理开关、socket 与停止顺序。 | 5、6、10、13–16 | 默认配置可按原路径启动 C，显式选择时仅有 Go fileserver 监听目标 HTTP 端口，核心及文件服务退出后可重启。模拟启动配置错误和进程失效，验证诊断和恢复。 |
 | 18 | 在兼容仓库和 CI 接入 v7 总回归，完成同数据的切换与回退验收。 | 15–17 | v1–v7 全量通过。先 C 写入，再用 Go 完成 HTTP 写入和同步，最后用 C 接管并继续上传和客户端同步。确认文件摘要、权限、head、SQLite 行、在途任务和重启结果，并记录关键吞吐、延迟和内存基线。 |
 

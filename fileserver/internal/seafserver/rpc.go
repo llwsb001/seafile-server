@@ -38,6 +38,8 @@ func (r *Reader) RPCHandlers(config *ServerConfig) map[string]searpc.Handler {
 		"seafile_list_share_repos":          r.listShareRepos,
 		"seafile_list_repo_shared_to":       r.listRepoSharedTo,
 		"get_shared_users_by_repo":          r.sharedUsersByRepo,
+		"org_get_shared_users_by_repo":      r.orgSharedUsersByRepo,
+		"get_shared_repo_by_path":           r.personalSharedRepoByPath,
 		"seafile_list_repo_shared_group":    r.listRepoSharedGroup,
 		"seafile_get_shared_groups_by_repo": r.sharedGroupsByRepo,
 		"seafile_get_group_repoids":         r.groupRepoIDs,

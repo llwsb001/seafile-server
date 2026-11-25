@@ -19,8 +19,17 @@ LEFT JOIN VirtualRepo v ON v.repo_id = sh.repo_id
 LEFT JOIN RepoInfo i ON i.repo_id = sh.repo_id
 LEFT JOIN RepoSize s ON s.repo_id = sh.repo_id`
 
+const shareOriginJoin = " LEFT JOIN RepoInfo origin ON origin.repo_id = v.origin_repo"
+
+const personalRepoSelect = "SELECT " + shareRepoColumns + ", sh.from_email, 0, origin.name"
+
 const groupRepoSelect = "SELECT " + shareRepoColumns + ", sh.user_name, COALESCE(sh.group_id, 0), origin.name" +
-	" FROM RepoGroup sh " + shareRepoJoins + " LEFT JOIN RepoInfo origin ON origin.repo_id = v.origin_repo"
+	" FROM RepoGroup sh " + shareRepoJoins + shareOriginJoin
+
+const orgGroupRepoSelect = "SELECT " + shareRepoColumns + ", sh.owner, COALESCE(sh.group_id, 0), origin.name" +
+	" FROM OrgGroupRepo sh " + shareRepoJoins + shareOriginJoin + orgShareRepoJoin
+
+const orgShareRepoJoin = " JOIN OrgRepo o ON o.repo_id = COALESCE(v.origin_repo, sh.repo_id) AND o.org_id = sh.org_id"
 
 const publicRepoSelect = "SELECT " + shareRepoColumns + ", owner.owner_id, 0, NULL" +
 	" FROM InnerPubRepo sh " + shareRepoJoins + " JOIN RepoOwner owner ON owner.repo_id = sh.repo_id"
@@ -49,38 +58,44 @@ func (r *Reader) readSharedRepos(ctx context.Context, shareType, query string, g
 	}
 	var result []map[string]any
 	for _, repo := range repos {
-		if repo.name == nil || repo.modifier == nil {
-			commit, err := r.Commit(repo.id, repo.head)
-			if err != nil {
-				log.Printf("SQLite share read: load commit %s/%s: %v", repo.id, repo.head, err)
-				continue
-			}
-			repo.name, repo.mtime, repo.version = &commit.RepoName, commit.Ctime, commit.Version
-			repo.modifier = nil
-			if commit.CreatorName != "" {
-				modifier := asciiLower(commit.CreatorName)
-				repo.modifier = &modifier
-			}
-			repo.encrypted = 0
-			if commit.Encrypted == "true" {
-				repo.encrypted = 1
-			}
+		if object := r.sharedRepoObject(repo, shareType, groupNames[repo.groupID], true); object != nil {
+			result = append(result, object)
 		}
-		object := newRepoObject(repo.id)
-		object["name"], object["repo-name"] = repo.name, repo.name
-		object["last-modifier"], object["head-cmmt-id"] = repo.modifier, repo.head
-		object["last-modify"], object["last-modified"] = repo.mtime, repo.mtime
-		object["version"], object["encrypted"] = repo.version, repo.encrypted != 0
-		object["size"], object["status"], object["repo-type"] = repo.size, repo.status, repo.kind
-		object["permission"], object["user"], object["share-type"] = repo.permission, lowerNullable(repo.user), shareType
-		groupID := int(int32(repo.groupID))
-		object["group-id"], object["group-name"] = groupID, groupNames[groupID]
-		if repo.virtualID != nil {
-			object["is-virtual"] = true
-			object["store-id"], object["origin-repo-id"] = repo.originID, repo.originID
-			object["origin-path"], object["origin-repo-name"] = repo.path, repo.originName
-		}
-		result = append(result, object)
 	}
 	return result, nil
+}
+
+func (r *Reader) sharedRepoObject(repo sharedRepo, shareType string, groupName *string, readCommit bool) map[string]any {
+	if readCommit && (repo.name == nil || repo.modifier == nil) {
+		commit, err := r.Commit(repo.id, repo.head)
+		if err != nil {
+			log.Printf("SQLite share read: load commit %s/%s: %v", repo.id, repo.head, err)
+			return nil
+		}
+		repo.name, repo.mtime, repo.version = &commit.RepoName, commit.Ctime, commit.Version
+		repo.modifier = nil
+		if commit.CreatorName != "" {
+			modifier := asciiLower(commit.CreatorName)
+			repo.modifier = &modifier
+		}
+		repo.encrypted = 0
+		if commit.Encrypted == "true" {
+			repo.encrypted = 1
+		}
+	}
+	object := newRepoObject(repo.id)
+	object["name"], object["repo-name"] = repo.name, repo.name
+	object["last-modifier"], object["head-cmmt-id"] = repo.modifier, repo.head
+	object["last-modify"], object["last-modified"] = repo.mtime, repo.mtime
+	object["version"], object["encrypted"] = repo.version, repo.encrypted != 0
+	object["size"], object["status"], object["repo-type"] = repo.size, repo.status, repo.kind
+	object["permission"], object["user"], object["share-type"] = repo.permission, lowerNullable(repo.user), shareType
+	groupID := int(int32(repo.groupID))
+	object["group-id"], object["group-name"] = groupID, groupName
+	if repo.virtualID != nil {
+		object["is-virtual"] = true
+		object["store-id"], object["origin-repo-id"] = repo.originID, repo.originID
+		object["origin-path"], object["origin-repo-name"] = repo.path, repo.originName
+	}
+	return object
 }

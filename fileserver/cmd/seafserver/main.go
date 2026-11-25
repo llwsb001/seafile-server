@@ -105,6 +105,15 @@ func run(ctx context.Context, args []string) error {
 		}
 		defer writer.Close()
 		maps.Copy(handlers, serverConfig.RPCHandlers(writer))
+		maps.Copy(handlers, reader.SyncTokenRPCHandlers(writer))
+		if ccnetDir != "" {
+			accounts, err := seafserver.OpenAccounts(ccnetDir, dbPath)
+			if err != nil {
+				return err
+			}
+			defer accounts.Close()
+			maps.Copy(handlers, accounts.RPCHandlers())
+		}
 	}
 	tokenMode, tokenTTL, err := webTokenSettings(confData, os.Getenv("ENABLE_GO_FILESERVER"))
 	if err != nil {

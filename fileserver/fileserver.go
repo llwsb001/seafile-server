@@ -354,12 +354,17 @@ func newHTTPRouter() *mux.Router {
 	r.Handle("/files/{.*}/{.*}", appHandler(accessCB))
 	r.Handle("/blks/{.*}/{.*}", appHandler(accessBlksCB))
 	r.Handle("/zip/{.*}", appHandler(accessZipCB))
-	r.Handle("/upload-api/{.*}", appHandler(uploadAPICB))
-	r.Handle("/upload-aj/{.*}", appHandler(uploadAjaxCB))
-	r.Handle("/update-api/{.*}", appHandler(updateAPICB))
-	r.Handle("/update-aj/{.*}", appHandler(updateAjaxCB))
-	r.Handle("/upload-blks-api/{.*}", appHandler(uploadBlksAPICB))
-	r.Handle("/upload-raw-blks-api/{.*}", appHandler(uploadRawBlksAPICB))
+	r.Handle("/upload-api/{.*}", uploadHTTPHandler(uploadAPICB))
+	r.Handle("/upload-aj/{.*}", uploadHTTPHandler(uploadAjaxCB))
+	r.Handle("/update-api/{.*}", uploadHTTPHandler(updateAPICB))
+	r.Handle("/update-aj/{.*}", uploadHTTPHandler(updateAjaxCB))
+	r.Handle("/upload-blks-api/{.*}", uploadHTTPHandler(uploadBlksAPICB))
+	r.Handle("/upload-raw-blks-api/{.*}", uploadHTTPHandler(uploadRawBlksAPICB))
+	if repomgr.UsesSQLite() {
+		r.Handle("/update-blks-api/{.*}", uploadHTTPHandler(updateBlksAPICB))
+		r.HandleFunc("/upload_progress", uploadProgressCB)
+		r.HandleFunc("/idx_progress", indexProgressCB)
+	}
 
 	// links api
 	//r.Handle("/u/{.*}", appHandler(uploadLinkCB))

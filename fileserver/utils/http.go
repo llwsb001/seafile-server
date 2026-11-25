@@ -20,10 +20,14 @@ func GetAuthorizationToken(h http.Header) string {
 }
 
 func HttpCommon(method, url string, header map[string][]string, reader io.Reader) (int, []byte, error) {
-	header["Content-Type"] = []string{"application/json"}
-	header["User-Agent"] = []string{"Seafile Server"}
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
+	return httpCommon(ctx, method, url, header, reader)
+}
+
+func httpCommon(ctx context.Context, method, url string, header map[string][]string, reader io.Reader) (int, []byte, error) {
+	header["Content-Type"] = []string{"application/json"}
+	header["User-Agent"] = []string{"Seafile Server"}
 	req, err := http.NewRequestWithContext(ctx, method, url, reader)
 	if err != nil {
 		return http.StatusInternalServerError, nil, err

@@ -137,12 +137,8 @@ func LoadFileServerOptions(centralDir string) {
 		}
 	}
 
-	notifServer := os.Getenv("INNER_NOTIFICATION_SERVER_URL")
-	enableNotifServer := os.Getenv("ENABLE_NOTIFICATION_SERVER")
-	if notifServer != "" && enableNotifServer == "true" {
-		NotificationURL = notifServer
-		EnableNotification = true
-	}
+	NotificationURL = NotificationURLFromEnv()
+	EnableNotification = NotificationURL != ""
 
 	if section, err := config.GetSection("httpserver"); err == nil {
 		parseFileServerSection(section)
@@ -330,6 +326,14 @@ func loadCacheOptionFromEnv() {
 			RedisExpiry = uint32(expiry)
 		}
 	}
+}
+
+// NotificationURLFromEnv returns the internal endpoint when notification is enabled.
+func NotificationURLFromEnv() string {
+	if os.Getenv("ENABLE_NOTIFICATION_SERVER") == "true" {
+		return os.Getenv("INNER_NOTIFICATION_SERVER_URL")
+	}
+	return ""
 }
 
 func LoadSeahubConfig() error {

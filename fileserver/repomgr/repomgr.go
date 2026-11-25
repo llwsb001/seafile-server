@@ -13,6 +13,7 @@ import (
 	"github.com/haiwen/seafile-server/fileserver/commitmgr"
 	"github.com/haiwen/seafile-server/fileserver/option"
 	log "github.com/sirupsen/logrus"
+	"modernc.org/sqlite"
 )
 
 // Repo status
@@ -71,6 +72,12 @@ func Init(seafDB *sql.DB) {
 	seafileDB = seafDB
 }
 
+// UsesSQLite reports whether sync requests use a shared SQLite database.
+func UsesSQLite() bool {
+	_, ok := seafileDB.Driver().(*sqlite.Driver)
+	return ok
+}
+
 // Get returns Repo object by repo ID.
 func Get(id string) *Repo {
 	ctx, cancel := context.WithTimeout(context.Background(), option.DBOpTimeout)
@@ -84,7 +91,7 @@ func Get(id string) *Repo {
 }
 
 // Load reads the master branch, virtual repo mapping and head commit for a repo.
-func Load(ctx context.Context, db *sql.DB, id string, loadCommit func(string, string) (*commitmgr.Commit, error)) (*Repo, error) {
+func Load(ctx context.Context, db repoQueryer, id string, loadCommit func(string, string) (*commitmgr.Commit, error)) (*Repo, error) {
 	query := `SELECT r.repo_id, b.commit_id, v.origin_repo, v.path, v.base_commit, ` +
 		`COALESCE(s.size, 0), COALESCE(fc.file_count, 0), COALESCE(i.status, 0), i.type FROM ` +
 		`Repo r LEFT JOIN Branch b ON r.repo_id = b.repo_id ` +
@@ -729,8 +736,12 @@ func GetRepoOwner(repoID string) (string, error) {
 	return owner, err
 }
 
+type repoQueryer interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}
+
 // LoadRepoOwner reads the stored owner ID for the logical repository.
-func LoadRepoOwner(ctx context.Context, db *sql.DB, repoID string) (string, error) {
+func LoadRepoOwner(ctx context.Context, db repoQueryer, repoID string) (string, error) {
 	var owner string
 	err := db.QueryRowContext(ctx, "SELECT owner_id FROM RepoOwner WHERE repo_id=?", repoID).Scan(&owner)
 	return owner, err

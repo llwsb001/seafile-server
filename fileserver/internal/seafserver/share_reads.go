@@ -38,7 +38,7 @@ func (r *Reader) listShareRepos(ctx context.Context, args []json.RawMessage) (an
 	// Apply pagination to stored metadata before reading fallback commits.
 	// C writes back fallback timestamps, which can change its subsequent page order.
 	query := "SELECT " + shareRepoColumns + ", sh." + to + ", 0, origin.name" +
-		" FROM SharedRepo sh " + shareRepoJoins + " LEFT JOIN RepoInfo origin ON origin.repo_id = v.origin_repo" +
+		" FROM SharedRepo sh " + shareRepoJoins + shareOriginJoin +
 		" WHERE sh." + from + " = ? ORDER BY i.update_time DESC, sh.repo_id, sh.rowid LIMIT ? OFFSET ?"
 	return r.readSharedRepos(ctx, "personal", query, nil, "", email, intArgument(args, 3), intArgument(args, 2))
 }
@@ -165,7 +165,7 @@ func (r *Reader) listGroupReposByOwner(ctx context.Context, args []json.RawMessa
 	return r.readSharedRepos(ctx, "group", query, nil, "", *owner)
 }
 
-func (r *Reader) listGroupReposByUser(identity *Identity) searpc.Handler {
+func (r *Reader) listGroupReposByUser(identity *Identity, organizational bool) searpc.Handler {
 	return func(ctx context.Context, args []json.RawMessage) (any, *searpc.RPCError) {
 		user := stringArgument(args, 0)
 		if user == nil {
@@ -178,17 +178,26 @@ func (r *Reader) listGroupReposByUser(identity *Identity) searpc.Handler {
 		if len(groups) == 0 {
 			return nil, nil
 		}
-		ids := make([]int, 0, len(groups))
 		names := make(map[int]*string, len(groups))
 		for _, group := range groups {
-			ids = append(ids, group.ID)
 			names[group.ID] = group.Name
 		}
-		encodedIDs, _ := json.Marshal(ids) // A slice of integers always encodes as JSON.
-		const query = groupRepoSelect + ` WHERE sh.group_id IN (SELECT value FROM json_each(?))
-ORDER BY sh.group_id, sh.repo_id`
-		return r.readSharedRepos(ctx, "group", query, names,
-			"Failed to get user group repos from db.", string(encodedIDs))
+		ids := groupInfoIDs(groups)
+		query := groupRepoSelect + " WHERE " + groupReposByIDs
+		params := []any{encodeGroupIDs(ids)}
+		orgID := intArgument(args, 1)
+		if organizational && orgID >= 0 {
+			ids, err = identity.groupsInOrg(ctx, orgID, ids)
+			if err != nil {
+				return nil, shareReadError("", err)
+			}
+			if len(ids) == 0 {
+				return nil, nil
+			}
+			query = orgGroupRepoSelect + " WHERE sh.org_id = ? AND " + groupReposByIDs
+			params = []any{orgID, encodeGroupIDs(ids)}
+		}
+		return r.readSharedRepos(ctx, "group", query, names, "Failed to get user group repos from db.", params...)
 	}
 }
 

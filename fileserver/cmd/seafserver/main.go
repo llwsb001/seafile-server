@@ -52,6 +52,9 @@ func run(ctx context.Context, args []string) error {
 	if enableShareWrites && ccnetDir == "" {
 		return errors.New("--enable-share-writes requires -c")
 	}
+	if err := seafserver.CheckNotificationConfig(); err != nil {
+		return err
+	}
 	if confDir == "" {
 		confDir = dataDir
 	}
@@ -80,9 +83,9 @@ func run(ctx context.Context, args []string) error {
 	reader := seafserver.NewReader(db, dataDir)
 	serverConfig := seafserver.NewServerConfig(db, confData)
 	handlers := reader.RPCHandlers(serverConfig)
+	maps.Copy(handlers, seafserver.EventRPCHandlers())
 	quota := seafserver.NewUserQuota(db, serverConfig)
 	maps.Copy(handlers, quota.RPCHandlers())
-	maps.Copy(handlers, seafserver.EventRPCHandlers())
 	if ccnetDir != "" {
 		identity, err := seafserver.OpenIdentityReadOnly(ctx, ccnetDir)
 		if err != nil {
@@ -93,6 +96,14 @@ func run(ctx context.Context, args []string) error {
 		handlers["seafile_get_user_share_usage"] = quota.ShareUsageRPC(identity)
 		cloudMode := config.Section("general").Key("cloud_mode").String()
 		maps.Copy(handlers, reader.PermissionRPCHandlers(identity, cloudMode == "true" || cloudMode == "1"))
+		if enableManagementRPCs {
+			organizations, err := seafserver.OpenOrganizations(ccnetDir, identity)
+			if err != nil {
+				return err
+			}
+			defer organizations.Close()
+			maps.Copy(handlers, organizations.RPCHandlers())
+		}
 	}
 	if enableShareWrites {
 		writer, err := seafserver.OpenShareWriter(dbPath)
@@ -110,12 +121,9 @@ func run(ctx context.Context, args []string) error {
 		defer writer.Close()
 		maps.Copy(handlers, serverConfig.RPCHandlers(writer))
 		maps.Copy(handlers, quota.ManagementRPCHandlers(writer))
-
-		passwords := seafserver.NewRepoPasswords(reader)
-		maps.Copy(handlers, passwords.RPCHandlers())
-		stopPasswords := passwords.StartCleanup(ctx)
-		defer stopPasswords()
-
+		maps.Copy(handlers, reader.SyncTokenRPCHandlers(writer))
+		maps.Copy(handlers, reader.RepoCreationRPCHandlers(writer))
+		maps.Copy(handlers, reader.DirectoryShareRPCHandlers(writer))
 		if ccnetDir != "" {
 			groupManagement, err := seafserver.OpenGroupManagement(ccnetDir, writer)
 			if err != nil {
@@ -123,7 +131,18 @@ func run(ctx context.Context, args []string) error {
 			}
 			defer groupManagement.Close()
 			maps.Copy(handlers, groupManagement.RPCHandlers())
+			accounts, err := seafserver.OpenAccounts(ccnetDir, dbPath)
+			if err != nil {
+				return err
+			}
+			defer accounts.Close()
+			maps.Copy(handlers, accounts.RPCHandlers())
 		}
+
+		passwords := seafserver.NewRepoPasswords(reader)
+		maps.Copy(handlers, passwords.RPCHandlers())
+		stopPasswords := passwords.StartCleanup(ctx)
+		defer stopPasswords()
 	}
 	tokenMode, tokenTTL, err := webTokenSettings(confData, os.Getenv("ENABLE_GO_FILESERVER"))
 	if err != nil {

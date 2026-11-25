@@ -18,7 +18,8 @@ func TestWebTokenSettings(t *testing.T) {
 		{"decimal-leading-zero", "web_token_expire_time=018\n", "", false, 18},
 		{"zero", "web_token_expire_time=0\n", "", false, 3600},
 		{"negative", "web_token_expire_time=-1\n", "", false, 3600},
-		{"malformed-ttl", "web_token_expire_time=1 # comment\n", "", false, 3600},
+		{"ttl-followed-by-space", "web_token_expire_time=1 # comment\n", "", false, 1},
+		{"malformed-ttl", "web_token_expire_time=1#comment\n", "", false, 3600},
 		{"max-ttl", "web_token_expire_time=2147483647\n", "", false, 2147483647},
 		{"overflow", "web_token_expire_time=2147483648\n", "", false, 3600},
 	} {

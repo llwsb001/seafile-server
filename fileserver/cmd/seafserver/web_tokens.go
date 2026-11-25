@@ -24,7 +24,13 @@ func webTokenSettings(data []byte, enableEnv string) (bool, int64, error) {
 	section := config.Section("fileserver")
 	mode := section.Key("use_go_fileserver").Value()
 	enabled := enableEnv == "true" || mode == "true" || mode == "1"
-	ttl, err := strconv.ParseInt(strings.TrimSpace(section.Key("web_token_expire_time").Value()), 10, 32)
+	// GKeyFile accepts text after the decimal integer when separated by whitespace.
+	const whitespace = " \t\r\n\v\f"
+	ttlValue := strings.TrimLeft(section.Key("web_token_expire_time").Value(), whitespace)
+	if space := strings.IndexAny(ttlValue, whitespace); space >= 0 {
+		ttlValue = ttlValue[:space]
+	}
+	ttl, err := strconv.ParseInt(ttlValue, 10, 32)
 	if err != nil || ttl <= 0 {
 		ttl = 3600
 	}

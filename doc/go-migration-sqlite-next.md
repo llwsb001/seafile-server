@@ -43,6 +43,8 @@
 
 任务 1 完成后，可并行推进分享读取、设置、加密密钥、同步令牌和事件。配额随后接入设置，身份和组织按表推进。任务 14 可在阶段 4 的实现期间准备。涉及共同 RPC 注册、SQLite 连接或调用方的 PR，合入前在最新依赖分支重新跑交叉场景。
 
+阶段 4 的实际结果、C → Go → C 演练和注册清单见 [SQLite 阶段 4 集成验收报告](go-migration-sqlite-stage4-acceptance.md)。
+
 先运行现有 v1–v4 验收入口。v5 与 v6 的入口由各自的兼容 PR 交付，按能力选择场景。C 对 C 设 `SEAFILE_TARGET_IMPL=c`，C 对 Go 设 `SEAFILE_TARGET_IMPL=go` 并传入对应二进制。
 
 ```sh

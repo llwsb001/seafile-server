@@ -2117,8 +2117,7 @@ var (
 func genNewCommit(repo *repomgr.Repo, base *commitmgr.Commit, newRoot, user, desc string, handleConncurrentUpdate bool, lastGCID string, checkGC bool) (string, error) {
 	var retryCnt int
 	repoID := repo.ID
-	commit := commitmgr.NewCommit(repoID, base.CommitID, newRoot, user, desc)
-	repomgr.RepoToCommit(repo, commit)
+	commit := newFileServerCommit(repo, base, newRoot, user, desc)
 	err := commitmgr.Save(commit)
 	if err != nil {
 		err := fmt.Errorf("failed to add commit: %v", err)
@@ -2234,8 +2233,7 @@ func genCommitNeedRetry(repo *repomgr.Repo, base *commitmgr.Commit, commit *comm
 		}
 
 		secondParentID = commit.CommitID
-		mergedCommit = commitmgr.NewCommit(repoID, currentHead.CommitID, opt.mergedRoot, user, mergeDesc)
-		repomgr.RepoToCommit(repo, mergedCommit)
+		mergedCommit = newFileServerCommit(repo, currentHead, opt.mergedRoot, user, mergeDesc)
 		mergedCommit.SecondParentID.SetValid(commit.CommitID)
 		mergedCommit.NewMerge = 1
 		if opt.conflict {
@@ -2679,7 +2677,10 @@ func indexFileWorker(args ...any) error {
 			blkSize = left
 		}
 		if left > 0 {
-			job := chunkingData{repoID, filePath, handler, offset, cryptKey}
+			job := chunkingData{
+				repoID: repoID, filePath: filePath, handler: handler,
+				offset: offset, length: blkSize, cryptKey: cryptKey,
+			}
 			select {
 			case chunkJobs <- job:
 				left -= blkSize
@@ -2748,6 +2749,7 @@ type chunkingData struct {
 	filePath string
 	handler  *multipart.FileHeader
 	offset   int64
+	length   int64
 	cryptKey *seafileCrypt
 }
 
@@ -2803,7 +2805,6 @@ func chunkFile(job chunkingData) (string, error) {
 	offset := job.offset
 	filePath := job.filePath
 	handler := job.handler
-	blkSize := option.FixedBlockSize
 	cryptKey := job.cryptKey
 	var file multipart.File
 	if handler != nil {
@@ -2828,15 +2829,12 @@ func chunkFile(job chunkingData) (string, error) {
 		err := fmt.Errorf("failed to seek file: %v", err)
 		return "", err
 	}
-	buf := make([]byte, blkSize)
-	n, err := file.Read(buf)
-	if err != nil {
-		err := fmt.Errorf("failed to seek file: %v", err)
-		return "", err
+	buf := make([]byte, job.length)
+	if _, err := io.ReadFull(file, buf); err != nil {
+		return "", fmt.Errorf("read file block at offset %d: %w", offset, err)
 	}
-	buf = buf[:n]
 
-	blkID, err := writeChunk(repoID, buf, int64(n), cryptKey)
+	blkID, err := writeChunk(repoID, buf, job.length, cryptKey)
 	if err != nil {
 		err := fmt.Errorf("failed to write chunk: %v", err)
 		return "", err

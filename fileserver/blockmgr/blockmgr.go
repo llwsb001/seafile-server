@@ -3,6 +3,7 @@ package blockmgr
 
 import (
 	"github.com/haiwen/seafile-server/fileserver/objstore"
+	"github.com/haiwen/seafile-server/fileserver/option"
 	"io"
 )
 
@@ -25,7 +26,7 @@ func Read(repoID string, blockID string, w io.Writer) error {
 
 // Write writes block to storage backend.
 func Write(repoID string, blockID string, r io.Reader) error {
-	err := store.Write(repoID, blockID, r, false)
+	err := store.Write(repoID, blockID, r, option.DBType == "sqlite")
 	if err != nil {
 		return err
 	}

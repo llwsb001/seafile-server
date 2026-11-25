@@ -46,6 +46,19 @@
 
 ## 验收方式
 
+### 启动 SQLite Go 组合
+
+在隔离的 SQLite 数据副本上验收启动和基础读取。将 `seafile.conf` 的 `[database] type` 设为 `sqlite`，在 `[fileserver]` 配置监听地址和端口并开启 `use_go_fileserver`。给两个进程设置同一 `JWT_PRIVATE_KEY`，使用同一服务账号。先在一个终端启动核心，等 `seafile.sock` 可用后，在另一终端启动文件服务。正式切换前完成表中的写入、同步和回退验收。
+
+```sh
+"$SEAFILE_TARGET_CORE_BIN" -f -F "$CONF_DIR" -d "$DATA_DIR" -c "$CCNET_DIR" -p "$RPC_DIR"
+"$SEAFILE_TARGET_FILESERVER_BIN" -F "$CONF_DIR" -d "$DATA_DIR" -c "$CCNET_DIR" -p "$RPC_DIR" -l -
+```
+
+文件服务从 `DATA_DIR/seafile.db` 与 `CCNET_DIR/GroupMgr/groupmgr.db` 读取库和群组数据，也支持从 `CCNET_CONF_DIR` 取得 ccnet 目录。实际 HTTP `GET /protocol-version` 返回版本 2 后即可执行 v7 场景。需要从核心签发持久同步令牌时，启动核心时额外传入 `--enable-management-rpcs`。
+
+### 对拍与接管
+
 1. **跑现有回归。** 在 Linux 按阶段 4 报告准备锁定的 C 二进制、`pysearpc` 和 v1 归档，保留 v1–v5 的验收入口。v6 用 `test-repo-create` 跑全部库写入场景。服务端现有 [上传与更新](../tests/test_file_operation/test_upload_and_update.py)、[下载响应头](../tests/test_file_operation/test_download_headers.py)、[ZIP](../tests/test_file_operation/test_zip_download.py)、[虚拟库合并](../tests/test_file_operation/test_merge_virtual_repo.py) 和 [大文件](../tests/test_file_operation/test_upload_large_files.py) 测试作为 v7 场景来源。 [现有验收命令](go-migration-sqlite-stage4-acceptance.md#复现命令)
 2. **建立 v7 双实例回放。** 兼容仓库新增 `fixtures/v7` 和 `make test-fileserver`。隔离两端的数据库、对象目录、临时文件、端口和 Unix socket。C 基线明确启用自身 HTTP，Go 待测组合使用真正启动的 `seaf-server` 与 `fileserver`。每组先过 C／C，再过 C／Go。Web 接口的独立回放使用可控 Seahub 响应，最终切换用与客户端配套的真实 Seahub。能观察到的差异分别保留 C 冻结响应和 Go 预期。
 3. **比较持久化和调用方结果。** HTTP 响应比较状态码、选定响应头、结构化数据及内容摘要。生成令牌和时间按关联关系及时效校验。ZIP 比包内路径和文件摘要，提交比父子关系、根目录和可达对象。写入结果核对 `Branch`、`RepoInfo`、`RepoSize`、`RepoFileCount` 及适用的虚拟库映射，并用现有 Python 和桌面客户端读取。报告记录敏感字段形状、别名或摘要。

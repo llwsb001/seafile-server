@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"maps"
 	"net"
 	"os"
 	"os/signal"
@@ -30,12 +31,14 @@ func main() {
 
 func run(ctx context.Context, args []string) error {
 	flags := flag.NewFlagSet("seaf-server", flag.ContinueOnError)
-	var dataDir, confDir, socketDir string
+	var dataDir, confDir, socketDir, ccnetDir string
 	var foreground bool
 	flags.StringVar(&dataDir, "d", "", "seafile data directory")
 	flags.StringVar(&dataDir, "seafdir", "", "seafile data directory")
 	flags.StringVar(&confDir, "F", "", "central configuration directory")
 	flags.StringVar(&confDir, "central-config-dir", "", "central configuration directory")
+	flags.StringVar(&ccnetDir, "c", "", "ccnet configuration directory")
+	flags.StringVar(&ccnetDir, "config-file", "", "ccnet configuration directory")
 	flags.StringVar(&socketDir, "p", "", "Searpc socket directory")
 	flags.StringVar(&socketDir, "rpc-pipe-path", "", "Searpc socket directory")
 	flags.BoolVar(&foreground, "f", false, "run in the foreground")
@@ -44,7 +47,7 @@ func run(ctx context.Context, args []string) error {
 		return err
 	}
 	if !foreground || dataDir == "" || flags.NArg() != 0 {
-		return errors.New("usage: seaf-server -f -d data-dir [-F config-dir] [-p socket-dir]")
+		return errors.New("usage: seaf-server -f -d data-dir [-F config-dir] [-c ccnet-dir] [-p socket-dir]")
 	}
 	if confDir == "" {
 		confDir = dataDir
@@ -67,14 +70,23 @@ func run(ctx context.Context, args []string) error {
 	defer db.Close()
 
 	reader := seafserver.NewReader(db, dataDir)
-	listener, err := net.Listen("unix", filepath.Join(socketDir, "seafile.sock"))
-	if err != nil {
-		return err
-	}
 	// The C server reads keep_days as a signed decimal integer.
 	keepDays, err := strconv.ParseInt(config.Section("history").Key("keep_days").String(), 10, 32)
 	if err != nil {
 		keepDays = -1
 	}
-	return searpc.Serve(ctx, listener, seafserver.RPCService, reader.RPCHandlers(int(keepDays)))
+	handlers := reader.RPCHandlers(int(keepDays))
+	if ccnetDir != "" {
+		identity, err := seafserver.OpenIdentityReadOnly(ctx, ccnetDir)
+		if err != nil {
+			return err
+		}
+		defer identity.Close()
+		maps.Copy(handlers, identity.RPCHandlers())
+	}
+	listener, err := net.Listen("unix", filepath.Join(socketDir, "seafile.sock"))
+	if err != nil {
+		return err
+	}
+	return searpc.Serve(ctx, listener, seafserver.RPCService, handlers)
 }

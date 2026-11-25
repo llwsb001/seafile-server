@@ -1,12 +1,8 @@
 package seafserver
 
 import (
-	"bytes"
 	"context"
-	"crypto/sha1"
 	"database/sql"
-	"encoding/binary"
-	"encoding/hex"
 	"encoding/json"
 	"log"
 	"time"
@@ -63,40 +59,16 @@ func (r *Reader) createRepo(ctx context.Context, db *sql.DB, args []json.RawMess
 }
 
 func newInitialRepoCommit(repoID, rootID, name, description, message, owner string, version int, timestamp int64) *commitmgr.Commit {
-	commit := &commitmgr.Commit{
-		RepoID: repoID, RootID: rootID, CreatorName: owner, CreatorID: emptyObjectID,
-		Desc: message, Ctime: timestamp, RepoName: name, RepoDesc: description,
-		Version: version,
-	}
-
-	hash := sha1.New()
-	var root, creator [41]byte
-	copy(root[:], commit.RootID)
-	copy(creator[:], commit.CreatorID)
-	hash.Write(root[:])
-	hash.Write(creator[:])
-	hash.Write(append([]byte(commit.CreatorName), 0))
-	hash.Write(append([]byte(commit.Desc), 0))
-	var value [8]byte
-	binary.BigEndian.PutUint64(value[:], uint64(commit.Ctime))
-	hash.Write(value[:])
-	commit.CommitID = hex.EncodeToString(hash.Sum(nil))
+	commit := commitmgr.NewCanonicalCommit(repoID, "", rootID, owner, message, timestamp)
+	commit.RepoName = name
+	commit.RepoDesc = description
+	commit.Version = version
+	commit.NoLocalHistory = 1
 	return commit
 }
 
 func (r *Reader) writeInitialRepoCommit(commit *commitmgr.Commit) error {
-	// The C initial commit records creator_name even for the empty string.
-	object := struct {
-		*commitmgr.Commit
-		CreatorName    string  `json:"creator_name"`
-		RepoCategory   *string `json:"repo_category"`
-		NoLocalHistory int     `json:"no_local_history"`
-	}{Commit: commit, CreatorName: commit.CreatorName, NoLocalHistory: 1}
-	payload, err := json.Marshal(object)
-	if err != nil {
-		return err
-	}
-	return r.commits.Write(commit.RepoID, commit.CommitID, bytes.NewReader(payload), true)
+	return commitmgr.SaveCanonicalToStore(r.commits, commit)
 }
 
 func publishInitialRepo(ctx context.Context, conn *sql.Conn, commit *commitmgr.Commit, owner string) error {

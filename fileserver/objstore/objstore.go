@@ -20,6 +20,8 @@ type storageBackend interface {
 	read(repoID string, objID string, w io.Writer) (err error)
 	// Write the contents from r to the object.
 	write(repoID string, objID string, r io.Reader, sync bool) (err error)
+	// syncObject flushes an already written object without changing its contents.
+	syncObject(repoID, objID string) error
 	// exists checks whether an object exists.
 	exists(repoID string, objID string) (res bool, err error)
 	// stat calculates an object's size
@@ -48,6 +50,11 @@ func (s *ObjectStore) Read(repoID string, objID string, w io.Writer) (err error)
 // Write data to storage backends.
 func (s *ObjectStore) Write(repoID string, objID string, r io.Reader, sync bool) (err error) {
 	return s.backend.write(repoID, objID, r, sync)
+}
+
+// Sync flushes an existing object and its directory entries.
+func (s *ObjectStore) Sync(repoID, objID string) error {
+	return s.backend.syncObject(repoID, objID)
 }
 
 // Check whether object exists.

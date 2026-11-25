@@ -50,3 +50,17 @@ v7 验证了鉴权和即时撤销、浏览器下载及 Range、ZIP 的准备及�
 - `make test-fileserver-objects` 验证 C 可以读 Go 写入的普通和加密对象。 `make test-fileserver-notification` 验证实际通知接收进程和顺序。 [对象回放](https://github.com/llwsb001/seafile-compat-tests/pull/25) · [通知回放](https://github.com/llwsb001/seafile-compat-tests/pull/37)
 - `make test-fileserver-seahub-clients` 启动真实 Seahub、通知进程和两个客户端，复跑切换、撤销和回退。 [回放与依赖版本](https://github.com/llwsb001/seafile-compat-tests/pull/42)
 - `make test-fileserver-ci` 按锁文件构建 C 与 Go，在隔离环境复跑。 [CI](https://github.com/llwsb001/seafile-compat-tests/pull/38)
+
+## 评审入口
+
+| 任务 | 服务端 | 兼容验收 |
+| --- | --- | --- |
+| 1–2 · v7 与 SQLite 启动 | [#35](https://github.com/llwsb001/seafile-server/pull/35) | [#24](https://github.com/llwsb001/seafile-compat-tests/pull/24) |
+| 3–4 · 鉴权与对象 | [#38](https://github.com/llwsb001/seafile-server/pull/38) · [#34](https://github.com/llwsb001/seafile-server/pull/34) | [#27](https://github.com/llwsb001/seafile-compat-tests/pull/27) · [#25](https://github.com/llwsb001/seafile-compat-tests/pull/25) |
+| 5–6 · 下载、ZIP 和分享链接 | [#41](https://github.com/llwsb001/seafile-server/pull/41) · [#46](https://github.com/llwsb001/seafile-server/pull/46) | [#30](https://github.com/llwsb001/seafile-compat-tests/pull/30) · [#36](https://github.com/llwsb001/seafile-compat-tests/pull/36) |
+| 7–8 · 分支发布、配额和统计 | [#37](https://github.com/llwsb001/seafile-server/pull/37) · [#36](https://github.com/llwsb001/seafile-server/pull/36) | [#26](https://github.com/llwsb001/seafile-compat-tests/pull/26) |
+| 9–10 · 上传、更新、块和续传 | [#39](https://github.com/llwsb001/seafile-server/pull/39) · [#43](https://github.com/llwsb001/seafile-server/pull/43) | [#28](https://github.com/llwsb001/seafile-compat-tests/pull/28) · [#32](https://github.com/llwsb001/seafile-compat-tests/pull/32) |
+| 11–12 · 桌面同步读写 | [#40](https://github.com/llwsb001/seafile-server/pull/40) · [#44](https://github.com/llwsb001/seafile-server/pull/44) | [#29](https://github.com/llwsb001/seafile-compat-tests/pull/29) · [#33](https://github.com/llwsb001/seafile-compat-tests/pull/33) |
+| 13–14 · 虚拟库与通知 | [#47](https://github.com/llwsb001/seafile-server/pull/47) · [#51](https://github.com/llwsb001/seafile-server/pull/51) · [#48](https://github.com/llwsb001/seafile-server/pull/48) | [#35](https://github.com/llwsb001/seafile-compat-tests/pull/35) · [#41](https://github.com/llwsb001/seafile-compat-tests/pull/41) · [#37](https://github.com/llwsb001/seafile-compat-tests/pull/37) |
+| 15 · 普通库文件 RPC | [#42](https://github.com/llwsb001/seafile-server/pull/42) · [#45](https://github.com/llwsb001/seafile-server/pull/45) · [#50](https://github.com/llwsb001/seafile-server/pull/50) | [#31](https://github.com/llwsb001/seafile-compat-tests/pull/31) · [#34](https://github.com/llwsb001/seafile-compat-tests/pull/34) · [#40](https://github.com/llwsb001/seafile-compat-tests/pull/40) |
+| 16–18 · 真客户端、部署及回退 | [#49](https://github.com/llwsb001/seafile-server/pull/49) | [#42](https://github.com/llwsb001/seafile-compat-tests/pull/42) · [#39](https://github.com/llwsb001/seafile-compat-tests/pull/39) · [#38](https://github.com/llwsb001/seafile-compat-tests/pull/38) |

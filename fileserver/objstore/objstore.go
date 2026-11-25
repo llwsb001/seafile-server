@@ -35,6 +35,11 @@ func New(seafileConfPath string, seafileDataDir string, objType string) *ObjectS
 	return obj
 }
 
+// OpenFilesystem opens an object store without creating directories.
+func OpenFilesystem(dataDir, objType string) *ObjectStore {
+	return &ObjectStore{ObjType: objType, backend: filesystemAt(dataDir, objType)}
+}
+
 // Read data from storage backends.
 func (s *ObjectStore) Read(repoID string, objID string, w io.Writer) (err error) {
 	return s.backend.read(repoID, objID, w)

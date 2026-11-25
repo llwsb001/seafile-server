@@ -149,14 +149,17 @@ func WriteRaw(repoID string, commitID string, r io.Reader) error {
 
 // Load commit from storage backend.
 func Load(repoID string, commitID string) (*Commit, error) {
+	return LoadFromStore(store, repoID, commitID)
+}
+
+// LoadFromStore reads a commit using the supplied object store.
+func LoadFromStore(objects *objstore.ObjectStore, repoID, commitID string) (*Commit, error) {
 	var buf bytes.Buffer
-	commit := new(Commit)
-	err := ReadRaw(repoID, commitID, &buf)
-	if err != nil {
+	if err := objects.Read(repoID, commitID, &buf); err != nil {
 		return nil, err
 	}
-	err = commit.FromData(buf.Bytes())
-	if err != nil {
+	commit := new(Commit)
+	if err := commit.FromData(buf.Bytes()); err != nil {
 		return nil, err
 	}
 

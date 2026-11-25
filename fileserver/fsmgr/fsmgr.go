@@ -589,31 +589,31 @@ func GetSeafileWithZlibReader(repoID string, fileID string, reader io.ReadCloser
 }
 
 func getSeafile(repoID string, fileID string, reader io.ReadCloser) (*Seafile, error) {
+	return readSeafile(store, repoID, fileID, 1, reader)
+}
 
-	var buf bytes.Buffer
-	seafile := new(Seafile)
+// ReadSeafile loads a file object from the given store and repository version.
+func ReadSeafile(objects *objstore.ObjectStore, repoID, fileID string, version int) (*Seafile, error) {
+	return readSeafile(objects, repoID, fileID, version, nil)
+}
+
+func readSeafile(objects *objstore.ObjectStore, repoID, fileID string, version int, reader io.ReadCloser) (*Seafile, error) {
 	if fileID == EmptySha1 {
-		seafile.FileID = EmptySha1
-		return seafile, nil
+		return &Seafile{FileID: EmptySha1}, nil
 	}
-
-	seafile.FileID = fileID
-
-	err := ReadRaw(repoID, fileID, &buf)
-	if err != nil {
-		errors := fmt.Errorf("failed to read seafile object from storage : %v", err)
-		return nil, errors
+	if !utils.IsObjectIDValid(fileID) {
+		return nil, fmt.Errorf("invalid file object id %q", fileID)
 	}
-
-	err = seafile.FromData(buf.Bytes(), reader)
-	if err != nil {
-		errors := fmt.Errorf("failed to parse seafile object %s/%s : %v", repoID, fileID, err)
-		return nil, errors
+	var buf bytes.Buffer
+	if err := objects.Read(repoID, fileID, &buf); err != nil {
+		return nil, fmt.Errorf("read file object %s/%s: %w", repoID, fileID, err)
 	}
-
-	if seafile.Version < 1 {
-		errors := fmt.Errorf("seafile object %s/%s version should be > 0", repoID, fileID)
-		return nil, errors
+	if version == 0 {
+		return decodeLegacyFile(fileID, buf.Bytes())
+	}
+	seafile := &Seafile{FileID: fileID}
+	if err := seafile.FromData(buf.Bytes(), reader); err != nil {
+		return nil, fmt.Errorf("parse file object %s/%s: %w", repoID, fileID, err)
 	}
 
 	return seafile, nil
@@ -659,43 +659,44 @@ func GetSeafdirWithZlibReader(repoID string, dirID string, reader io.ReadCloser)
 }
 
 func getSeafdir(repoID string, dirID string, reader io.ReadCloser, useCache bool) (*SeafDir, error) {
-	var seafdir *SeafDir
 	if useCache {
-		seafdir = getSeafdirFromCache(repoID, dirID)
-		if seafdir != nil {
-			return seafdir, nil
+		if dir := getSeafdirFromCache(repoID, dirID); dir != nil {
+			return dir, nil
 		}
 	}
-	var buf bytes.Buffer
-	seafdir = new(SeafDir)
-	if dirID == EmptySha1 {
-		seafdir.DirID = EmptySha1
-		return seafdir, nil
-	}
-
-	seafdir.DirID = dirID
-
-	err := ReadRaw(repoID, dirID, &buf)
+	seafdir, err := readSeafdir(store, repoID, dirID, 1, reader)
 	if err != nil {
-		errors := fmt.Errorf("failed to read seafdir object from storage : %v", err)
-		return nil, errors
+		return nil, err
 	}
-
-	err = seafdir.FromData(buf.Bytes(), reader)
-	if err != nil {
-		errors := fmt.Errorf("failed to parse seafdir object %s/%s : %v", repoID, dirID, err)
-		return nil, errors
-	}
-
-	if seafdir.Version < 1 {
-		errors := fmt.Errorf("seadir object %s/%s version should be > 0", repoID, dirID)
-		return nil, errors
-	}
-
-	if useCache {
+	if useCache && dirID != EmptySha1 {
 		setSeafdirToCache(repoID, seafdir)
 	}
+	return seafdir, nil
+}
 
+// ReadSeafdir loads a directory object from the given store and repository version.
+func ReadSeafdir(objects *objstore.ObjectStore, repoID, dirID string, version int) (*SeafDir, error) {
+	return readSeafdir(objects, repoID, dirID, version, nil)
+}
+
+func readSeafdir(objects *objstore.ObjectStore, repoID, dirID string, version int, reader io.ReadCloser) (*SeafDir, error) {
+	if dirID == EmptySha1 {
+		return &SeafDir{DirID: EmptySha1}, nil
+	}
+	if !utils.IsObjectIDValid(dirID) {
+		return nil, fmt.Errorf("invalid directory object id %q", dirID)
+	}
+	var buf bytes.Buffer
+	if err := objects.Read(repoID, dirID, &buf); err != nil {
+		return nil, fmt.Errorf("read directory object %s/%s: %w", repoID, dirID, err)
+	}
+	if version == 0 {
+		return decodeLegacyDir(dirID, buf.Bytes())
+	}
+	seafdir := &SeafDir{DirID: dirID}
+	if err := seafdir.FromData(buf.Bytes(), reader); err != nil {
+		return nil, fmt.Errorf("parse directory object %s/%s: %w", repoID, dirID, err)
+	}
 	return seafdir, nil
 }
 

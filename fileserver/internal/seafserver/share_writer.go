@@ -74,8 +74,9 @@ func (s *ShareWriter) exec(ctx context.Context, repoID, query string, args ...an
 		return false, err
 	}
 	defer conn.Close()
-	// Hold the writer lock from the scope check through the mutation.
-	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+	// A late cancellation must not hide whether SQLite began or committed the transaction.
+	transaction := context.WithoutCancel(ctx)
+	if _, err := conn.ExecContext(transaction, "BEGIN IMMEDIATE"); err != nil {
 		return false, err
 	}
 	committed := false
@@ -84,7 +85,7 @@ func (s *ShareWriter) exec(ctx context.Context, repoID, query string, args ...an
 			return
 		}
 		// A failed SQLite COMMIT can leave the transaction active.
-		if _, err := conn.ExecContext(context.Background(), "ROLLBACK"); err != nil {
+		if _, err := conn.ExecContext(transaction, "ROLLBACK"); err != nil {
 			conn.Raw(func(any) error { return driver.ErrBadConn })
 		}
 	}()
@@ -98,7 +99,10 @@ SELECT EXISTS (SELECT 1 FROM Repo WHERE repo_id = ?)
 	if _, err := conn.ExecContext(ctx, query, args...); err != nil {
 		return false, err
 	}
-	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	if _, err := conn.ExecContext(transaction, "COMMIT"); err != nil {
 		return false, err
 	}
 	committed = true

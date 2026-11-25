@@ -45,6 +45,8 @@
 
 阶段 4 的实际结果、C → Go → C 演练和注册清单见 [SQLite 阶段 4 集成验收报告](go-migration-sqlite-stage4-acceptance.md)。
 
+常规 Go fileserver 启动、文件写入、HTTP 对拍和实际客户端切换见 [SQLite 文件服务迁移计划](go-migration-sqlite-fileserver.md)。
+
 先运行现有 v1–v4 验收入口。v5 与 v6 的入口由各自的兼容 PR 交付，按能力选择场景。C 对 C 设 `SEAFILE_TARGET_IMPL=c`，C 对 Go 设 `SEAFILE_TARGET_IMPL=go` 并传入对应二进制。
 
 ```sh

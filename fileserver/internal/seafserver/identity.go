@@ -139,7 +139,11 @@ func (s *Identity) groupsByUser(ctx context.Context, user string, includeAncesto
 	if includeAncestors {
 		query = ancestorGroups
 	}
-	rows, err := s.groups.QueryContext(ctx, query, user)
+	return s.readGroups(ctx, query, false, user)
+}
+
+func (s *Identity) readGroups(ctx context.Context, query string, lowerCreator bool, args ...any) ([]groupInfo, error) {
+	rows, err := s.groups.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -149,6 +153,9 @@ func (s *Identity) groupsByUser(ctx context.Context, user string, includeAncesto
 		var group groupInfo
 		if err := group.scan(rows); err != nil {
 			return nil, err
+		}
+		if lowerCreator {
+			group.Creator = lowerNullable(group.Creator)
 		}
 		groups = append(groups, group)
 	}
@@ -170,7 +177,14 @@ func (s *Identity) groupMembers(ctx context.Context, groupID, start, limit int) 
 		query += " LIMIT ? OFFSET ?"
 		params = append(params, limit, max(start, 0))
 	}
-	rows, err := s.groups.QueryContext(ctx, query, params...)
+	members, err := s.readGroupMembers(ctx, query, params...)
+	// The C RPC reverses the rows after SQLite selects the page.
+	slices.Reverse(members)
+	return members, err
+}
+
+func (s *Identity) readGroupMembers(ctx context.Context, query string, args ...any) ([]groupMember, error) {
+	rows, err := s.groups.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -181,14 +195,9 @@ func (s *Identity) groupMembers(ctx context.Context, groupID, start, limit int) 
 		if err := rows.Scan(&member.GroupID, &member.User, &member.Staff); err != nil {
 			return nil, err
 		}
-		if member.User != nil {
-			user := asciiLower(*member.User)
-			member.User = &user
-		}
+		member.User = lowerNullable(member.User)
 		members = append(members, member)
 	}
-	// The C RPC reverses the rows after SQLite selects the page.
-	slices.Reverse(members)
 	return members, rows.Err()
 }
 

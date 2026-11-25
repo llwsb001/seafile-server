@@ -115,6 +115,15 @@ func run(ctx context.Context, args []string) error {
 		maps.Copy(handlers, passwords.RPCHandlers())
 		stopPasswords := passwords.StartCleanup(ctx)
 		defer stopPasswords()
+
+		if ccnetDir != "" {
+			groupManagement, err := seafserver.OpenGroupManagement(ccnetDir, writer)
+			if err != nil {
+				return err
+			}
+			defer groupManagement.Close()
+			maps.Copy(handlers, groupManagement.RPCHandlers())
+		}
 	}
 	tokenMode, tokenTTL, err := webTokenSettings(confData, os.Getenv("ENABLE_GO_FILESERVER"))
 	if err != nil {

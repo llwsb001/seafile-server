@@ -15,17 +15,32 @@ const errCCNetInternal = 500
 // RPCHandlers exposes the read-only ccnet identity RPCs.
 func (s *Identity) RPCHandlers() map[string]searpc.Handler {
 	return map[string]searpc.Handler{
-		"get_emailuser":     s.getEmailUserRPC,
-		"get_group":         s.getGroupRPC,
-		"get_groups":        s.getGroupsRPC,
-		"get_group_members": s.getGroupMembersRPC,
-		"is_group_user":     s.isGroupUserRPC,
-		"get_org_by_id":     s.getOrgByIDRPC,
-		"org_user_exists":   s.orgUserExistsRPC,
+		"get_emailuser":           s.getEmailUserRPC,
+		"get_group":               s.getGroupRPC,
+		"get_groups":              s.getGroupsRPC,
+		"get_group_members":       s.getGroupMembersRPC,
+		"get_all_groups":          s.getAllGroups,
+		"get_ancestor_groups":     s.getAncestorGroups,
+		"get_top_groups":          s.getTopGroups,
+		"get_child_groups":        s.getChildGroups,
+		"get_descendants_groups":  s.getDescendantsGroups,
+		"list_all_departments":    s.listAllDepartments,
+		"get_members_with_prefix": s.getGroupMembersWithPrefix,
+		"check_group_staff":       s.checkGroupStaff,
+		"search_groups":           s.searchGroups,
+		"search_group_members":    s.searchGroupMembers,
+		"get_groups_members":      s.getGroupsMembers,
+		"is_group_user":           s.isGroupUserRPC,
+		"get_org_by_id":           s.getOrgByIDRPC,
+		"org_user_exists":         s.orgUserExistsRPC,
 	}
 }
 
 func intArgument(args []json.RawMessage, index int) int {
+	return int(int32(int64Argument(args, index)))
+}
+
+func int64Argument(args []json.RawMessage, index int) int64 {
 	var value int64
 	if index < len(args) {
 		// Searpc's Jansson marshaller gives missing and noninteger values zero.
@@ -33,7 +48,7 @@ func intArgument(args []json.RawMessage, index int) int {
 			return 0
 		}
 	}
-	return int(int32(value))
+	return value
 }
 
 func (s *Identity) getEmailUserRPC(ctx context.Context, args []json.RawMessage) (any, *searpc.RPCError) {

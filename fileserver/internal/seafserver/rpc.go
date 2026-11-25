@@ -24,7 +24,7 @@ const (
 )
 
 // RPCHandlers exposes the repository reads using the existing Searpc names.
-func (r *Reader) RPCHandlers(defaultKeepDays int) map[string]searpc.Handler {
+func (r *Reader) RPCHandlers(config *ServerConfig) map[string]searpc.Handler {
 	return map[string]searpc.Handler{
 		"seafile_get_repo":            r.getRepo,
 		"seafile_get_commit":          r.getCommit,
@@ -33,7 +33,22 @@ func (r *Reader) RPCHandlers(defaultKeepDays int) map[string]searpc.Handler {
 		"seafile_get_repo_owner":      r.getRepoOwner,
 		"seafile_is_repo_owner":       r.isRepoOwner,
 		"get_repo_status":             r.getRepoStatus,
-		"get_repo_history_limit":      r.getRepoHistoryLimit(defaultKeepDays),
+		"get_repo_history_limit":      r.getRepoHistoryLimit(config),
+
+		"seafile_list_share_repos":          r.listShareRepos,
+		"seafile_list_repo_shared_to":       r.listRepoSharedTo,
+		"get_shared_users_by_repo":          r.sharedUsersByRepo,
+		"seafile_list_repo_shared_group":    r.listRepoSharedGroup,
+		"seafile_get_shared_groups_by_repo": r.sharedGroupsByRepo,
+		"seafile_get_group_repoids":         r.groupRepoIDs,
+		"get_group_repo_owner":              r.groupRepoOwner,
+		"seafile_get_repos_by_group":        r.listReposByGroup,
+		"get_group_repos_by_owner":          r.listGroupReposByOwner,
+		"repo_has_been_shared":              r.repoHasBeenShared,
+		"list_inner_pub_repos":              r.listInnerPublicRepos,
+		"list_inner_pub_repos_by_owner":     r.listInnerPublicReposByOwner,
+		"count_inner_pub_repos":             r.countInnerPublicRepos,
+		"is_inner_pub_repo":                 r.isInnerPublicRepo,
 	}
 }
 
@@ -200,26 +215,41 @@ func asciiLower(value string) string {
 	}, value)
 }
 
-func repoObject(repo *repomgr.Repo) map[string]any {
-	object := map[string]any{
-		"id": repo.ID, "name": repo.Name, "desc": repo.Desc, "version": repo.Version,
-		"last-modify": repo.LastModificationTime, "size": repo.Size, "file-count": repo.FileCount,
-		"last-modifier": creatorName(repo.LastModifier), "head-cmmt-id": repo.HeadCommitID,
-		"root": repo.RootID, "status": repo.Status, "repo-type": nil,
-		"repo-id": repo.ID, "repo-name": repo.Name, "repo-desc": repo.Desc, "last-modified": repo.LastModificationTime,
-		"encrypted": repo.IsEncrypted, "magic": repo.Magic, "enc-version": repo.EncVersion,
-		"random-key": nil, "salt": nil, "pwd-hash": repo.PwdHash,
-		"pwd-hash-algo": optionalString(repo.PwdHashAlgo), "pwd-hash-params": optionalString(repo.PwdHashParams),
+// newRepoObject supplies the Vala defaults used by both full and listing RPCs.
+func newRepoObject(id string) map[string]any {
+	return map[string]any{
+		"id": id, "name": nil, "desc": nil, "version": 0,
+		"last-modify": 0, "size": 0, "file-count": 0, "last-modifier": nil, "head-cmmt-id": nil,
+		"root": nil, "status": 0, "repo-type": nil,
+		"repo-id": id, "repo-name": nil, "repo-desc": nil, "last-modified": 0,
+		"encrypted": false, "magic": nil, "enc-version": 0,
+		"random-key": nil, "salt": nil, "pwd-hash": nil, "pwd-hash-algo": nil, "pwd-hash-params": nil,
 		"worktree": nil, "relay-id": nil, "last-sync-time": 0, "auto-sync": false, "worktree-invalid": false,
-		"is-virtual": repo.VirtualInfo != nil, "origin-repo-id": nil, "origin-repo-name": nil, "origin-path": nil,
-		"is-original-owner": false, "virtual-perm": nil, "store-id": repo.StoreID,
-		"is-corrupted": repo.IsCorrupted, "repaired": repo.Repaired,
+		"is-virtual": false, "origin-repo-id": nil, "origin-repo-name": nil, "origin-path": nil,
+		"is-original-owner": false, "virtual-perm": nil, "store-id": id,
+		"is-corrupted": false, "repaired": false,
 		"share-type": nil, "permission": nil, "user": nil, "group-id": 0, "group-name": nil, "is-shared": false,
 	}
+}
+
+func repoObject(repo *repomgr.Repo) map[string]any {
+	object := newRepoObject(repo.ID)
+	object["name"], object["repo-name"] = repo.Name, repo.Name
+	object["desc"], object["repo-desc"] = repo.Desc, repo.Desc
+	object["version"], object["last-modifier"] = repo.Version, creatorName(repo.LastModifier)
+	object["last-modify"], object["last-modified"] = repo.LastModificationTime, repo.LastModificationTime
+	object["size"], object["file-count"], object["status"] = repo.Size, repo.FileCount, repo.Status
+	object["root"], object["head-cmmt-id"], object["store-id"] = repo.RootID, repo.HeadCommitID, repo.StoreID
+	object["encrypted"], object["enc-version"], object["magic"] = repo.IsEncrypted, repo.EncVersion, repo.Magic
+	object["pwd-hash"] = repo.PwdHash
+	object["pwd-hash-algo"], object["pwd-hash-params"] = optionalString(repo.PwdHashAlgo), optionalString(repo.PwdHashParams)
+	object["is-corrupted"], object["repaired"] = repo.IsCorrupted, repo.Repaired
+
 	if repo.Type.Valid {
 		object["repo-type"] = repo.Type.String
 	}
 	if repo.VirtualInfo != nil {
+		object["is-virtual"] = true
 		object["origin-repo-id"] = repo.VirtualInfo.OriginRepoID
 		object["origin-path"] = repo.VirtualInfo.Path
 	}

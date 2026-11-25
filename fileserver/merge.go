@@ -348,29 +348,25 @@ func mergeConflictFileName(storeID string, opt *mergeOptions, baseDir, fileName 
 }
 
 func genConflictPath(originPath, modifier string, mtime int64) string {
-	var conflictPath string
-	now := time.Now()
-	timeBuf := now.Format("2006-Jan-2-15-04-05")
+	timeBuf := time.Now().Format("2006-Jan-2-15-04-05")
 	dot := strings.Index(originPath, ".")
-	if dot < 0 {
-		if modifier != "" {
-			conflictPath = fmt.Sprintf("%s (SFConflict %s %s)",
-				originPath, modifier, timeBuf)
-		} else {
-			conflictPath = fmt.Sprintf("%s (SFConflict %s)",
-				originPath, timeBuf)
-		}
-	} else {
-		if modifier != "" {
-			conflictPath = fmt.Sprintf("%s (SFConflict %s %s).%s",
-				originPath, modifier, timeBuf, originPath[dot+1:])
-		} else {
-			conflictPath = fmt.Sprintf("%s (SFConflict %s).%s",
-				originPath, timeBuf, originPath[dot+1:])
-		}
+	usesSQLite := option.DBType == "sqlite"
+	if usesSQLite {
+		timeBuf = time.Unix(mtime, 0).Format("2006-01-02-15-04-05")
+		dot = strings.LastIndex(originPath, ".")
 	}
 
-	return conflictPath
+	name, ext := originPath, ""
+	if dot >= 0 {
+		ext = originPath[dot:]
+		if usesSQLite {
+			name = originPath[:dot]
+		}
+	}
+	if modifier != "" {
+		return fmt.Sprintf("%s (SFConflict %s %s)%s", name, modifier, timeBuf, ext)
+	}
+	return fmt.Sprintf("%s (SFConflict %s)%s", name, timeBuf, ext)
 }
 
 func getNickNameByModifier(emailToNickname map[string]string, modifier string) string {

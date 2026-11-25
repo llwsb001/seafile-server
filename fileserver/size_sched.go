@@ -15,6 +15,7 @@ import (
 	"github.com/haiwen/seafile-server/fileserver/commitmgr"
 	"github.com/haiwen/seafile-server/fileserver/diff"
 	"github.com/haiwen/seafile-server/fileserver/fsmgr"
+	"github.com/haiwen/seafile-server/fileserver/internal/seafserver"
 	"github.com/haiwen/seafile-server/fileserver/option"
 	"github.com/haiwen/seafile-server/fileserver/repomgr"
 	"github.com/haiwen/seafile-server/fileserver/workerpool"
@@ -132,10 +133,19 @@ func computeRepoSize(args ...interface{}) error {
 		size = info.Size
 	}
 
-	err = setRepoSizeAndFileCount(repoID, repo.HeadCommitID, size, fileCount)
+	stored := true
+	if repomgr.UsesSQLite() {
+		ctx, cancel := context.WithTimeout(context.Background(), option.DBOpTimeout)
+		defer cancel()
+		stored, err = seafserver.StoreSQLiteRepoStats(ctx, seafileDB, repoID, repo.HeadCommitID, size, fileCount)
+	} else {
+		err = setRepoSizeAndFileCount(repoID, repo.HeadCommitID, size, fileCount)
+	}
 	if err != nil {
-		err := fmt.Errorf("failed to set repo size and file count %s: %v", repoID, err)
-		return err
+		return fmt.Errorf("failed to set repo size and file count %s: %w", repoID, err)
+	}
+	if !stored {
+		return nil
 	}
 
 	err = notifyRepoSizeChange(repo.StoreID)
@@ -254,6 +264,10 @@ type RepoInfo struct {
 func getOldRepoInfo(repoID string) (*RepoInfo, error) {
 	sqlStr := "select s.head_id,s.size,f.file_count FROM RepoSize s LEFT JOIN RepoFileCount f ON " +
 		"s.repo_id=f.repo_id WHERE s.repo_id=?"
+	if repomgr.UsesSQLite() {
+		// A legacy cache row without a count requires a fresh tree walk.
+		sqlStr += " AND s.head_id IS NOT NULL AND s.size IS NOT NULL AND f.file_count IS NOT NULL"
+	}
 
 	repoInfo := new(RepoInfo)
 	ctx, cancel := context.WithTimeout(context.Background(), option.DBOpTimeout)

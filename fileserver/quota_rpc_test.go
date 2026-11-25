@@ -106,4 +106,10 @@ INSERT INTO RepoSize VALUES ('origin', 150), ('virtual', 200);
 	if appErr := checkQuotaByContentLength(request, "virtual", 850); appErr == nil || appErr.Code != seafHTTPResNoQuota {
 		t.Fatalf("upload at the SQLite default quota should return no-quota: %v", appErr)
 	}
+	if _, err := db.Exec("UPDATE UserQuota SET quota = NULL WHERE user = ?", "owner@example.test"); err != nil {
+		t.Fatal(err)
+	}
+	if appErr := checkQuotaByContentLength(request, "virtual", 849); appErr != nil {
+		t.Fatalf("a NULL explicit quota should fall back to the SQLite default: %v", appErr)
+	}
 }

@@ -144,7 +144,7 @@ func getFsId(args ...interface{}) error {
 		resChan <- &calResult{user, appErr}
 		return nil
 	}
-	appErr = checkPermission(repoID, user, "download", false)
+	appErr = checkPermission(r.Context(), repoID, user, "download", false)
 	if appErr != nil {
 		resChan <- &calResult{user, appErr}
 		return nil
@@ -237,7 +237,7 @@ func permissionCheckCB(rsp http.ResponseWriter, r *http.Request) *appError {
 	if err != nil {
 		return err
 	}
-	err = checkPermission(repoID, user, op, true)
+	err = checkPermission(r.Context(), repoID, user, op, true)
 	if err != nil {
 		return err
 	}
@@ -281,7 +281,7 @@ func getBlockMapCB(rsp http.ResponseWriter, r *http.Request) *appError {
 	if appErr != nil {
 		return appErr
 	}
-	appErr = checkPermission(repoID, user, "download", false)
+	appErr = checkPermission(r.Context(), repoID, user, "download", false)
 	if appErr != nil {
 		return appErr
 	}
@@ -459,7 +459,7 @@ func recvFSCB(rsp http.ResponseWriter, r *http.Request) *appError {
 		return appErr
 	}
 
-	appErr = checkPermission(repoID, user, "upload", false)
+	appErr = checkPermission(r.Context(), repoID, user, "upload", false)
 	if appErr != nil {
 		return appErr
 	}
@@ -529,7 +529,7 @@ func postCheckExistCB(rsp http.ResponseWriter, r *http.Request, existType checkE
 	if appErr != nil {
 		return appErr
 	}
-	appErr = checkPermission(repoID, user, "download", false)
+	appErr = checkPermission(r.Context(), repoID, user, "download", false)
 	if appErr != nil {
 		return appErr
 	}
@@ -591,7 +591,7 @@ func packFSCB(rsp http.ResponseWriter, r *http.Request) *appError {
 	if appErr != nil {
 		return appErr
 	}
-	appErr = checkPermission(repoID, user, "download", false)
+	appErr = checkPermission(r.Context(), repoID, user, "download", false)
 	if appErr != nil {
 		return appErr
 	}
@@ -821,7 +821,7 @@ func putSendBlockCB(rsp http.ResponseWriter, r *http.Request) *appError {
 		return appErr
 	}
 
-	appErr = checkPermission(repoID, user, "upload", false)
+	appErr = checkPermission(r.Context(), repoID, user, "upload", false)
 	if appErr != nil {
 		return appErr
 	}
@@ -856,7 +856,7 @@ func getBlockInfo(rsp http.ResponseWriter, r *http.Request) *appError {
 		return appErr
 	}
 
-	appErr = checkPermission(repoID, user, "download", false)
+	appErr = checkPermission(r.Context(), repoID, user, "download", false)
 	if appErr != nil {
 		return appErr
 	}
@@ -974,7 +974,7 @@ func putCommitCB(rsp http.ResponseWriter, r *http.Request) *appError {
 	if appErr != nil {
 		return appErr
 	}
-	appErr = checkPermission(repoID, user, "upload", true)
+	appErr = checkPermission(r.Context(), repoID, user, "upload", true)
 	if appErr != nil {
 		return appErr
 	}
@@ -1028,7 +1028,7 @@ func getCommitInfo(rsp http.ResponseWriter, r *http.Request) *appError {
 	if appErr != nil {
 		return appErr
 	}
-	appErr = checkPermission(repoID, user, "download", false)
+	appErr = checkPermission(r.Context(), repoID, user, "download", false)
 	if appErr != nil {
 		return appErr
 	}
@@ -1066,7 +1066,7 @@ func putUpdateBranchCB(rsp http.ResponseWriter, r *http.Request) *appError {
 		return appErr
 	}
 
-	appErr = checkPermission(repoID, user, "upload", false)
+	appErr = checkPermission(r.Context(), repoID, user, "upload", false)
 	if appErr != nil && appErr.Code == http.StatusForbidden {
 		return appErr
 	}
@@ -1301,18 +1301,28 @@ func getHeadCommit(rsp http.ResponseWriter, r *http.Request) *appError {
 	return nil
 }
 
-func checkPermission(repoID, user, op string, skipCache bool) *appError {
-	var info *permInfo
-	if !skipCache {
-		if value, ok := permCache.Load(fmt.Sprintf("%s:%s:%s", repoID, user, op)); ok {
-			info = value.(*permInfo)
-		}
-	}
-	if info != nil {
-		return nil
-	}
+// SQLite sync clients expect the C fileserver's status-only authentication response.
+var errSQLiteSyncAuth = errors.New("SQLite sync authentication rejected")
 
-	permCache.Delete(fmt.Sprintf("%s:%s:%s", repoID, user, op))
+func syncAuthError(usesSQLite bool, status int, message string) *appError {
+	if usesSQLite {
+		return &appError{Error: errSQLiteSyncAuth, Code: status}
+	}
+	return &appError{Message: message, Code: status}
+}
+
+func checkPermission(ctx context.Context, repoID, user, op string, skipCache bool) *appError {
+	usesSQLite := repomgr.UsesSQLite()
+	var cacheKey string
+	if !usesSQLite {
+		cacheKey = fmt.Sprintf("%s:%s:%s", repoID, user, op)
+		if !skipCache {
+			if value, ok := permCache.Load(cacheKey); ok && value.(*permInfo) != nil {
+				return nil
+			}
+		}
+		permCache.Delete(cacheKey)
+	}
 
 	if op == "upload" {
 		status, err := repomgr.GetRepoStatus(repoID)
@@ -1321,19 +1331,33 @@ func checkPermission(repoID, user, op string, skipCache bool) *appError {
 			return &appError{nil, msg, http.StatusForbidden}
 		}
 		if status != repomgr.RepoStatusNormal && status != -1 {
-			return &appError{nil, "", http.StatusForbidden}
+			return syncAuthError(usesSQLite, http.StatusForbidden, "")
 		}
 	}
 
-	perm := share.CheckPerm(repoID, user)
-	if perm != "" {
+	if usesSQLite {
+		// The core owns SQLite share rules and can change a grant between requests.
+		rpcCtx, cancel := context.WithTimeout(ctx, option.DBOpTimeout)
+		defer cancel()
+		permission, err := rpcclient.CallContext(rpcCtx, "check_permission", repoID, user)
+		if err != nil {
+			return &appError{err, "", http.StatusInternalServerError}
+		}
+		perm, _ := permission.(string)
+		if perm == "rw" || (perm == "r" && op != "upload") {
+			return nil
+		}
+		return syncAuthError(true, http.StatusForbidden, "")
+	}
+
+	if perm := share.CheckPerm(repoID, user); perm != "" {
 		if perm == "r" && op == "upload" {
 			return &appError{nil, "", http.StatusForbidden}
 		}
-		info = new(permInfo)
+		info := new(permInfo)
 		info.perm = perm
 		info.expireTime = time.Now().Unix() + permExpireTime
-		permCache.Store(fmt.Sprintf("%s:%s:%s", repoID, user, op), info)
+		permCache.Store(cacheKey, info)
 		return nil
 	}
 
@@ -1341,17 +1365,17 @@ func checkPermission(repoID, user, op string, skipCache bool) *appError {
 }
 
 func validateToken(r *http.Request, repoID string, skipCache bool) (string, *appError) {
+	usesSQLite := repomgr.UsesSQLite()
 	token := r.Header.Get("Seafile-Repo-Token")
 	if token == "" {
 		token = utils.GetAuthorizationToken(r.Header)
 		if token == "" {
-			msg := "token is null"
-			return "", &appError{nil, msg, http.StatusBadRequest}
+			return "", syncAuthError(usesSQLite, http.StatusBadRequest, "token is null")
 		}
 	}
 
 	// SQLite revocations are committed by the separate core process.
-	if !skipCache && !repomgr.UsesSQLite() {
+	if !skipCache && !usesSQLite {
 		if value, ok := tokenCache.Load(token); ok {
 			if info, ok := value.(*tokenInfo); ok {
 				if info.repoID != repoID {
@@ -1371,8 +1395,15 @@ func validateToken(r *http.Request, repoID string, skipCache bool) (string, *app
 	}
 	if email == "" {
 		tokenCache.Delete(token)
+		if usesSQLite {
+			return email, syncAuthError(true, http.StatusForbidden, "")
+		}
 		msg := fmt.Sprintf("Failed to get email by token %s", token)
 		return email, &appError{nil, msg, http.StatusForbidden}
+	}
+
+	if usesSQLite {
+		return email, nil
 	}
 
 	info := new(tokenInfo)

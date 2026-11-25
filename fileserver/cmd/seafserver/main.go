@@ -127,6 +127,7 @@ func run(ctx context.Context, args []string) error {
 		maps.Copy(handlers, reader.SyncTokenRPCHandlers(writer))
 		maps.Copy(handlers, reader.RepoCreationRPCHandlers(writer))
 		maps.Copy(handlers, reader.DirectoryShareRPCHandlers(writer))
+		handlers["seafile_get_upload_tmp_file_offset"] = seafserver.UploadOffsetRPC(writer)
 		if identity != nil {
 			maps.Copy(handlers, reader.FileWriteRPCHandlers(writer, identity, cloudMode))
 			groupManagement, err := seafserver.OpenGroupManagement(ccnetDir, writer)

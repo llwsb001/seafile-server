@@ -24,6 +24,9 @@ func (r *Reader) RepoCreationRPCHandlers(db *sql.DB) map[string]searpc.Handler {
 		"seafile_create_repo": func(ctx context.Context, args []json.RawMessage) (any, *searpc.RPCError) {
 			return r.createRepo(ctx, db, args)
 		},
+		"create_virtual_repo": func(ctx context.Context, args []json.RawMessage) (any, *searpc.RPCError) {
+			return r.createVirtualRepo(ctx, db, args)
+		},
 	}
 }
 
@@ -41,7 +44,7 @@ func (r *Reader) createRepo(ctx context.Context, db *sql.DB, args []json.RawMess
 	if err != nil {
 		return nil, rpcError(errGeneral, "Failed to generate repo id")
 	}
-	commit := newInitialRepoCommit(repoID.String(), emptyObjectID, *name, *description, *owner, time.Now().Unix())
+	commit := newInitialRepoCommit(repoID.String(), emptyObjectID, *name, *description, "Created library", *owner, initialRepoVersion, time.Now().Unix())
 	if err := r.writeInitialRepoCommit(commit); err != nil {
 		log.Printf("create repo: write initial commit: %v", err)
 		return nil, rpcError(errGeneral, "Failed to add commit")
@@ -59,11 +62,11 @@ func (r *Reader) createRepo(ctx context.Context, db *sql.DB, args []json.RawMess
 	return commit.RepoID, nil
 }
 
-func newInitialRepoCommit(repoID, rootID, name, description, owner string, timestamp int64) *commitmgr.Commit {
+func newInitialRepoCommit(repoID, rootID, name, description, message, owner string, version int, timestamp int64) *commitmgr.Commit {
 	commit := &commitmgr.Commit{
 		RepoID: repoID, RootID: rootID, CreatorName: owner, CreatorID: emptyObjectID,
-		Desc: "Created library", Ctime: timestamp, RepoName: name, RepoDesc: description,
-		Version: initialRepoVersion,
+		Desc: message, Ctime: timestamp, RepoName: name, RepoDesc: description,
+		Version: version,
 	}
 
 	hash := sha1.New()

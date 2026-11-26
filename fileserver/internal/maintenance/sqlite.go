@@ -47,13 +47,17 @@ func openSQLiteCopy(ctx context.Context, dir, source string, sidecars []string) 
 			return nil, err
 		}
 	}
-	db, err := seafserver.OpenSQLiteReadWrite(filepath.Join(dir, filepath.Base(source)))
+	return openRepairDB(ctx, filepath.Join(dir, filepath.Base(source)))
+}
+
+func openRepairDB(ctx context.Context, path string) (*sql.DB, error) {
+	db, err := seafserver.OpenSQLiteReadWrite(path)
 	if err != nil {
 		return nil, err
 	}
 	if err := db.PingContext(ctx); err != nil {
 		db.Close()
-		return nil, fmt.Errorf("open SQLite maintenance copy: %w", err)
+		return nil, fmt.Errorf("open SQLite database %s: %w", path, err)
 	}
 	return db, nil
 }

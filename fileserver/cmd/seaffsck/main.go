@@ -79,7 +79,11 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		}
 	}
 
-	store, err := maintenance.Open(ctx, opts.dataDir, opts.configDir)
+	openStore := maintenance.Open
+	if opts.Repair {
+		openStore = maintenance.OpenForRepair
+	}
+	store, err := openStore(ctx, opts.dataDir, opts.configDir)
 	if err != nil {
 		fmt.Fprintf(stdout, "Failed to create seafile session: %v\n", err)
 		return 1
@@ -105,9 +109,10 @@ func expandHome(path string) (string, error) {
 }
 
 func usage(w io.Writer) {
-	fmt.Fprint(w, `usage: seaf-fsck [-E exported_path] [-F central-config-dir] [-d seafile_dir] [repo_id_1 [repo_id_2 ...]]
+	fmt.Fprint(w, `usage: seaf-fsck [-r] [-E exported_path] [-F central-config-dir] [-d seafile_dir] [repo_id_1 [repo_id_2 ...]]
 Additional options:
 -f, --force: run fsck without user ownership check
+-r, --repair: repair offline libraries
 -t, --threads: thread number for fsck
 -E, --export: export libraries to the specified path
 -S, --check-file-size: compare directory entry and file object sizes
@@ -150,6 +155,8 @@ func parse(args []string) (options, error) {
 				result.force = true
 			case "s":
 				result.Shallow = true
+			case "r":
+				result.Repair = true
 			case "S":
 				result.CheckFileSize = true
 			case "c", "d", "E", "F", "i", "t":
@@ -181,7 +188,7 @@ func splitOption(arg string) (names []string, value string, hasValue bool) {
 	}
 	long, value, hasValue := strings.Cut(arg[2:], "=")
 	for _, option := range []struct{ long, short string }{
-		{"help", "h"}, {"version", "v"}, {"force", "f"}, {"threads", "t"},
+		{"help", "h"}, {"version", "v"}, {"force", "f"}, {"repair", "r"}, {"threads", "t"},
 		{"config-file", "c"}, {"central-config-dir", "F"}, {"seafdir", "d"},
 		{"shallow", "s"}, {"check-file-size", "S"}, {"id-prefix", "i"}, {"export", "E"},
 	} {

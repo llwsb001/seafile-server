@@ -24,10 +24,15 @@ type CheckOptions struct {
 	Threads       int
 	Shallow       bool
 	CheckFileSize bool
+	Repair        bool
 }
 
-// Check reports repository damage and scans fallback commits without changing references.
+// Check reports repository damage and scans fallback commits. A writable store
+// and explicit repair option are required to replace damaged entries.
 func (s *Store) Check(ctx context.Context, opts CheckOptions, output io.Writer) error {
+	if opts.Repair && !s.write {
+		return errors.New("repair requires a writable SQLite store")
+	}
 	ids := opts.RepoIDs
 	if opts.Prefix != nil || len(ids) == 0 {
 		var err error
@@ -80,6 +85,7 @@ type repoCheck struct {
 	truncateAt  int64
 	blocks      map[string]bool
 	directories map[string]bool
+	repair      repairChanges
 }
 
 func (c *repoCheck) check(ctx context.Context, id string) {
@@ -100,12 +106,17 @@ func (c *repoCheck) check(ctx context.Context, id string) {
 		return
 	}
 	c.repo = repo
+	if c.opts.Repair {
+		c.repair = repairChanges{at: time.Now().Unix(), blocks: make(map[string]bool)}
+	}
 	var root *fsmgr.SeafDir
+	var selected *commitmgr.Commit
 	var checkName string
 	if repo.HeadID == "" {
 		c.log("Failed to get master branch of repo %.8s.", id)
 	} else {
 		c.head, err = c.store.Commit(repo, repo.HeadID)
+		selected = c.head
 		if err != nil {
 			c.log("Commit %s is missing", repo.HeadID)
 		} else {
@@ -117,15 +128,15 @@ func (c *repoCheck) check(ctx context.Context, id string) {
 			}
 		}
 	}
-	if root == nil {
+	reset := root == nil
+	if reset {
 		c.log("Repo %.8s HEAD commit is damaged, need to restore to an old version.", id)
-		var candidate *commitmgr.Commit
-		candidate, root = c.fallback()
+		selected, root = c.fallback()
 		if root == nil {
 			return
 		}
 		if c.head == nil {
-			checkName, c.version = candidate.RepoName, candidate.Version
+			checkName, c.version = selected.RepoName, selected.Version
 		}
 	}
 
@@ -133,7 +144,10 @@ func (c *repoCheck) check(ctx context.Context, id string) {
 	if c.opts.CheckFileSize {
 		c.truncateAt = c.store.historyCutoff(ctx, repo, time.Now())
 	}
-	c.checkDir(ctx, root, "/")
+	nextRoot, ok := c.checkDir(ctx, root, "/")
+	if c.opts.Repair && ok && (reset || nextRoot != root.DirID) {
+		c.publishRepair(ctx, selected, nextRoot)
+	}
 }
 
 func (c *repoCheck) fallback() (*commitmgr.Commit, *fsmgr.SeafDir) {
@@ -190,32 +204,49 @@ func (c *repoCheck) directory(id string) (*fsmgr.SeafDir, error) {
 	return dir, err
 }
 
-func (c *repoCheck) checkDir(ctx context.Context, dir *fsmgr.SeafDir, parent string) bool {
+func (c *repoCheck) checkDir(ctx context.Context, dir *fsmgr.SeafDir, parent string) (string, bool) {
 	c.directories[dir.DirID] = true
 	defer delete(c.directories, dir.DirID)
 
+	changed := false
 	for _, entry := range dir.Entries {
 		if ctx.Err() != nil {
-			return false
+			return "", false
 		}
+		original := entry.ID
 		if fsmgr.IsRegular(entry.Mode) {
 			if !c.checkFile(ctx, entry, parent+entry.Name) {
-				return false
+				return "", false
 			}
 		} else if fsmgr.IsDir(entry.Mode) {
 			path := parent + entry.Name + "/"
 			subdir, err := c.directory(entry.ID)
 			if isObjectIOError(err) {
-				return false
+				return "", false
 			}
 			if err != nil || c.directories[entry.ID] {
-				c.log("Repo[%.8s] dir %s(%.8s) is damaged.", c.repo.ID, path, entry.ID)
-			} else if !c.checkDir(ctx, subdir, path) {
-				return false
+				c.reportDamagedDir(entry, path)
+			} else {
+				next, ok := c.checkDir(ctx, subdir, path)
+				if !ok {
+					return "", false
+				}
+				if c.opts.Repair {
+					entry.ID = next
+				}
 			}
 		}
+		changed = changed || original != entry.ID
 	}
-	return true
+	if !changed {
+		return dir.DirID, true
+	}
+	next, err := fsmgr.WriteCompatibleDirectory(c.store.fs, c.repo.StoreID, c.version, dir.Entries)
+	if err != nil {
+		c.log("Repo[%.8s] failed to save dir: %v.", c.repo.ID, err)
+		return "", false
+	}
+	return next, true
 }
 
 func (c *repoCheck) checkFile(ctx context.Context, entry *fsmgr.SeafDirent, path string) bool {
@@ -235,7 +266,7 @@ func (c *repoCheck) checkFile(ctx context.Context, entry *fsmgr.SeafDirent, path
 		}
 	}
 	if !ok {
-		c.log("Repo[%.8s] file %s(%.8s) is damaged.", c.repo.ID, path, entry.ID)
+		c.reportDamagedFile(entry, path)
 	} else if c.opts.CheckFileSize && file.FileSize != uint64(entry.Size) {
 		c.reportFileSize(ctx, path, entry.ID)
 	}
@@ -245,6 +276,10 @@ func (c *repoCheck) checkFile(ctx context.Context, entry *fsmgr.SeafDirent, path
 func (c *repoCheck) checkBlocks(file *fsmgr.Seafile) (bool, error) {
 	ok := true
 	for _, id := range file.BlkIDs {
+		if c.repair.blocks[id] {
+			ok = false
+			continue
+		}
 		if c.blocks[id] {
 			continue
 		}
@@ -262,7 +297,7 @@ func (c *repoCheck) checkBlocks(file *fsmgr.Seafile) (bool, error) {
 				return false, err
 			}
 			if hex.EncodeToString(digest.Sum(nil)) != id {
-				c.log("Repo[%.8s] block %s is damaged.", c.repo.ID, id)
+				c.reportDamagedBlock(id)
 				ok = false
 			}
 		}

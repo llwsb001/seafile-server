@@ -2,7 +2,9 @@ package seafserver
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"log"
 	"slices"
 	"strings"
@@ -17,6 +19,7 @@ func (r *Reader) AdminRepoReadRPCHandlers() map[string]searpc.Handler {
 		"seafile_count_repos":            r.countAdminRepos,
 		"seafile_search_repos_by_name":   r.searchAdminReposByName,
 		"seafile_get_repos_by_id_prefix": r.searchAdminReposByIDPrefix,
+		"get_system_default_repo_id":     r.getSystemDefaultRepoID,
 	}
 }
 
@@ -68,6 +71,15 @@ func (r *Reader) countAdminRepos(ctx context.Context, _ []json.RawMessage) (any,
 		return int64(-1), rpcError(errGeneral, "Failed to count repos from db")
 	}
 	return count, nil
+}
+
+func (r *Reader) getSystemDefaultRepoID(ctx context.Context, _ []json.RawMessage) (any, *searpc.RPCError) {
+	var id *string
+	const query = "SELECT info_value FROM SystemInfo WHERE info_key = 'default_repo_id'"
+	if err := r.db.QueryRowContext(ctx, query).Scan(&id); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		log.Printf("get system default repository: %v", err)
+	}
+	return id, nil
 }
 
 func (r *Reader) searchAdminReposByName(ctx context.Context, args []json.RawMessage) (any, *searpc.RPCError) {

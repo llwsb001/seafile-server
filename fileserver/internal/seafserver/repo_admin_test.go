@@ -188,3 +188,31 @@ func TestAdminRepoSearch(t *testing.T) {
 		t.Fatalf("file counts from name and ID lookup = %v and %v", names[0]["file-count"], identifiers[0]["file-count"])
 	}
 }
+
+func TestAdminSystemDefaultRepo(t *testing.T) {
+	reader := adminRepoFixture(t)
+	checkDefault := func(want string) {
+		t.Helper()
+		value, rpcErr := callAdminRepoRPC(t, reader, "get_system_default_repo_id")
+		if rpcErr != nil {
+			t.Fatal(rpcErr)
+		}
+		valueJSON, err := json.Marshal(value)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(valueJSON) != want {
+			t.Fatalf("default repository = %s, want %s", valueJSON, want)
+		}
+	}
+	checkDefault("null")
+	if _, err := reader.db.Exec("INSERT INTO SystemInfo VALUES ('unrelated', ?), ('default_repo_id', ?)",
+		adminSecond, adminFirst); err != nil {
+		t.Fatal(err)
+	}
+	checkDefault(`"` + adminFirst + `"`)
+	if _, err := reader.db.Exec("DELETE FROM Repo WHERE repo_id = ?", adminFirst); err != nil {
+		t.Fatal(err)
+	}
+	checkDefault(`"` + adminFirst + `"`)
+}

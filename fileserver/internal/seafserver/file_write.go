@@ -52,6 +52,7 @@ func (r *Reader) FileWriteRPCHandlers(ctx context.Context, db *sql.DB, identity 
 		"seafile_batch_del_files":    writer.edit(3, batchDeleteFiles),
 		"seafile_rename_file":        writer.edit(5, renameFile),
 		"seafile_move_file":          writer.moveFiles,
+		"seafile_copy_file":          writer.copyFiles,
 		"get_copy_task":              writer.moves.get,
 		"cancel_copy_task":           writer.moves.cancel,
 	}, writer.moves.close

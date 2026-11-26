@@ -81,6 +81,18 @@ SQLite 默认启动 C 组合。将 `[fileserver] use_go_fileserver` 设为 `true
 
 在隔离副本中用兼容仓库的 `make test-fileserver-controller` 验证默认 C 启动、Go HTTP、私有 socket、进程恢复、错误诊断及回退。切回 C 时先停止当前组合，将 `use_go_fileserver` 设为 `false`，再用相同数据目录启动 controller。
 
+### 选用 Go `seafile-controller`
+
+在 Linux 获取候选并单独构建。验收把候选按 `seafile-controller` 的名字放入安装树的 `seafile/bin`，与 `seaf-server`、`seaf-server-go` 和 `fileserver` 同目录。启动参数沿用 `-F`、`-c`、`-d`、`-l`、`-P`、`-f` 和 `-t`。`SEAFILE_PIDFILE` 提供默认 PID 路径，`SEAFILE_LOG_TO_STDOUT=true` 启用前台日志。
+
+```sh
+go -C fileserver build -o "$SEAFILE_CONTROLLER_BIN" ./cmd/seafilecontroller
+```
+
+`[fileserver] use_go_fileserver = false` 启用 C 核心及其 HTTP。设为 `true` 后，controller 等 Go 核心的 PID 和私有 Unix socket 就绪，再启动独立的 HTTP fileserver。HTTP 故障只重启 HTTP。核心故障则先停止依赖进程，再依次恢复。收到 SIGTERM 或 SIGINT 后依次停止 SeafDAV、HTTP 和核心。
+
+`seafdav.conf` 的 `[WEBDAV] enabled = true` 启动 Python SeafDAV，并传递配置路径、端口、日志及 RPC socket。兼容仓库用 `test-fileserver-controller` 在同一数据上验证 C 回退、Go 恢复、PID 清理和日志轮转。`SEAFILE_CONTROLLER_DAV=1` 追加真实 SeafDAV HTTP 与重启检查。 [SeafDAV 启动入口](https://github.com/haiwen/seafdav/blob/1d29df54f8479de960500b1518fafae91c647c4b/wsgidav/server/server_cli.py)
+
 ### 对拍与接管
 
 1. **跑现有回归。** 在 Linux 按阶段 4 报告准备锁定的 C 二进制、`pysearpc` 和 v1 归档，保留 v1–v5 的验收入口。v6 用 `test-repo-create` 跑全部库写入场景。服务端现有 [上传与更新](../tests/test_file_operation/test_upload_and_update.py)、[下载响应头](../tests/test_file_operation/test_download_headers.py)、[ZIP](../tests/test_file_operation/test_zip_download.py)、[虚拟库合并](../tests/test_file_operation/test_merge_virtual_repo.py) 和 [大文件](../tests/test_file_operation/test_upload_large_files.py) 测试作为 v7 场景来源。 [现有验收命令](go-migration-sqlite-stage4-acceptance.md#复现命令)

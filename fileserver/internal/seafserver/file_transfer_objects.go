@@ -5,6 +5,7 @@ import (
 	"crypto/sha1"
 	"encoding/hex"
 	"errors"
+	"fmt"
 
 	"github.com/haiwen/seafile-server/fileserver/fsmgr"
 	"github.com/haiwen/seafile-server/fileserver/internal/repocrypt"
@@ -97,6 +98,10 @@ func (c *libraryCopy) transcodeBlock(id string) (string, error) {
 		return "", err
 	}
 	data := input.Bytes()
+	sourceChecksum := sha1.Sum(data)
+	if hex.EncodeToString(sourceChecksum[:]) != id {
+		return "", fmt.Errorf("source block %s checksum mismatch", id)
+	}
 	if key := c.sourceKey; key.version != 0 {
 		var err error
 		data, err = repocrypt.Decrypt(key.version, key.key, key.iv, data)

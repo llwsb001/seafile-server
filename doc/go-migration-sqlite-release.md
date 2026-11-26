@@ -9,7 +9,7 @@
 | 服务端 `master` | `b7e3be540a6929de101b06582adb771423b2edf8`，已包含 Go 核心、文件服务、controller、fsck 和 GC。 [服务端 #71](https://github.com/llwsb001/seafile-server/pull/71) |
 | 兼容仓库 `main` | `dd673840a161d7ebd36745b7c3ae085ca6760ba0`，已合入 v8 回放、离线维护和队列接管 CI。 [兼容测试 #62](https://github.com/llwsb001/seafile-compat-tests/pull/62) |
 | C 对拍版本 | `fa46d4c43a9a23ff2f70acf92c14e6cb28955664`。继续使用上一阶段锁定的 Seahub、客户端、SeafDAV 和 libsearpc。 [兼容仓库版本锁](https://github.com/llwsb001/seafile-compat-tests/blob/dd673840a161d7ebd36745b7c3ae085ca6760ba0/versions.lock) |
-| 合并后复验 | v7 在兼容仓库 `main` 的默认锁定组合通过。v8 的合并后首次运行在 `cross-origin-move-advances-source-origin` 报告 `$.ret` 差异。任务 1 先定位故障，再固定 v1–v8 的共同候选。 [v7 运行](https://github.com/llwsb001/seafile-compat-tests/actions/runs/45741814560) · [v8 运行](https://github.com/llwsb001/seafile-compat-tests/actions/runs/45741814503/attempts/1) |
+| 合并后复验 | v7 在兼容仓库 `main` 的默认锁定组合通过。v8 首次在 `cross-origin-move-advances-source-origin` 报告 `$.ret` 差异，同一提交复跑通过。任务 1 先定位这次间歇性差异，再固定 v1–v8 的共同候选。 [v7 运行](https://github.com/llwsb001/seafile-compat-tests/actions/runs/45741814560) · [v8 首次运行](https://github.com/llwsb001/seafile-compat-tests/actions/runs/45741814503/attempts/1) · [v8 复跑](https://github.com/llwsb001/seafile-compat-tests/actions/runs/45741814503/attempts/2) |
 
 ## 安装和数据契约
 

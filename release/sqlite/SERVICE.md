@@ -10,11 +10,16 @@
 SERVICE="$GO_VERSION/seafile/bin/seafile-sqlite"
 "$SERVICE" --version-dir "$GO_VERSION" check
 "$SERVICE" --version-dir "$GO_VERSION" start
+"$SERVICE" --version-dir "$GO_VERSION" status
 "$SERVICE" --version-dir "$GO_VERSION" restart
 "$SERVICE" --version-dir "$GO_VERSION" stop
 ```
 
 `start` 先检查共享 PID、版本的 RPC socket 及已配置 HTTP 端口。Go controller、核心和 fileserver 的实际可执行路径与选定版本一致，且 RPC 和 `/protocol-version` 可用后，命令返回成功。启动诊断写入 `logs/sqlite-launch.log`。停止命令核对进程对应版本，再通过 pidfd 发送信号并等待子服务退出。换版本前先停止 Seahub 及其它写入方。启用的 Go SeafDAV 由 controller 管理，Seahub 和通知服务各自由部署入口启动。
+
+`status` 输出一条 JSON。核心进程和两个探针均就绪时，`state` 为 `running`。未发现进程或监听的 RPC 时为 `stopped`。发现部分组件、版本路径不匹配或无法读取进程时为 `degraded`。这三种观察结果都以退出码 0 返回。Seahub 和 DAV 的 PID 可用于诊断，未启用时不影响核心状态。命令可在停服时执行，无需创建 PID 目录、操作锁或修改数据。
+
+`queue.state` 为 `empty`、`pending`、`not-present` 或 `unavailable`。`pending` 同时报告持久队列的行数。遇到 WAL 模式、读锁冲突或缺失数据库时报告 `unavailable`，保留已有文件状态。回退仍以 C `start` 的队列检查为准。
 
 使用同一入口运行离线命令时，`--` 后的选项交给该版本的工具。入口拒绝写入方仍在运行的实例，并用选定版本对应的配置与数据路径调用工具。
 

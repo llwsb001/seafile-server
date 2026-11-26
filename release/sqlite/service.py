@@ -127,7 +127,7 @@ def assert_stopped(release: Release, *, include_seahub: bool = True) -> None:
         raise RuntimeError(f"RPC socket is still active at {release.rpc}")
 
 
-def check_config(release: Release) -> tuple[str, int]:
+def http_location(release: Release) -> tuple[str, int]:
     config = ConfigParser(interpolation=None, inline_comment_prefixes=("#", ";"))
     path = release.instance / "conf/seafile.conf"
     with path.open(encoding="utf-8") as source:
@@ -147,11 +147,16 @@ def check_config(release: Release) -> tuple[str, int]:
     port = config.getint("fileserver", "port", fallback=port)
     if not 0 < port <= 65535:
         raise ValueError(f"invalid fileserver port {port}")
+    return host, port
+
+
+def check_config(release: Release) -> tuple[str, int]:
+    address = http_location(release)
     subprocess.run(
         release.launch_args(check=True), cwd=release.version,
         env=release.environment(), check=True, timeout=START_TIMEOUT,
     )
-    return host, port
+    return address
 
 
 def http_ready(host: str, port: int) -> bool:
@@ -162,6 +167,73 @@ def http_ready(host: str, port: int) -> bool:
             return response.status == 200 and json.loads(response.read()) == {"version": 2}
         except (ConnectionError, TimeoutError, HTTPException, ValueError):
             return False
+
+
+def observe_queue(database: Path) -> dict:
+    try:
+        with database.open("rb") as source:
+            header = source.read(20)
+        wal = database.with_name(database.name + "-wal")
+        if header[:16] != b"SQLite format 3\0" or header[18:20] != b"\x01\x01" or wal.exists():
+            # A WAL reader can create a shared-memory sidecar even in mode=ro.
+            return {"state": "unavailable", "reason": "requires a rollback-journal database"}
+        with closing(sqlite3.connect(database.as_uri() + "?mode=ro", uri=True, timeout=0.2)) as db:
+            db.execute("BEGIN")
+            exists = db.execute(
+                "SELECT 1 FROM sqlite_schema WHERE name = 'GoFileWriteQueue' AND type = 'table'",
+            ).fetchone()
+            if not exists:
+                return {"state": "not-present"}
+            count, = db.execute("SELECT COUNT(*) FROM GoFileWriteQueue").fetchone()
+            return {"state": "empty" if count == 0 else "pending", "count": count}
+    except (OSError, sqlite3.Error) as error:
+        return {"state": "unavailable", "reason": str(error)}
+
+
+def status(release: Release) -> dict:
+    host, port = http_location(release)
+    expected_names = {
+        CONTROLLER_PID: "seafile-controller" if release.implementation == "go" else None,
+        CORE_PID: "seaf-server-go" if release.implementation == "go" else "seaf-server",
+        "fileserver.pid": "fileserver" if release.implementation == "go" else None,
+    }
+    processes = {}
+    for name in (CONTROLLER_PID, *WRITER_PIDS):
+        expected_name = expected_names.get(name)
+        expected = release.binary(expected_name).resolve() if expected_name else None
+        try:
+            process = active_process(release.pids / name)
+        except (OSError, ValueError) as error:
+            processes[name] = {"pid": None, "executable": None, "matches": False, "error": str(error)}
+            continue
+        if process is None:
+            processes[name] = {"pid": None, "executable": None,
+                               "matches": expected is None if name in expected_names else None}
+        else:
+            pid, binary = process
+            processes[name] = {"pid": pid, "executable": str(binary),
+                               "matches": binary == expected if name in expected_names else None}
+
+    expected_ready = all(processes[name]["matches"] for name in expected_names)
+    errors = any("error" in item for item in processes.values())
+    rpc_error = None
+    try:
+        rpc = rpc_listening(release.rpc)
+    except OSError as error:
+        rpc = False
+        rpc_error = str(error)
+    http = expected_ready and http_ready(host, port)
+    if expected_ready and rpc and http and not errors:
+        state = "running"
+    elif errors or rpc_error or rpc or any(item["pid"] is not None for item in processes.values()):
+        state = "degraded"
+    else:
+        state = "stopped"
+    return {
+        "state": state, "implementation": release.implementation, "version_dir": str(release.version),
+        "processes": processes, "rpc_ready": rpc, "rpc_error": rpc_error, "http_ready": http,
+        "queue": observe_queue(release.instance / "seafile-data/seafile.db"),
+    }
 
 
 def start(release: Release) -> None:
@@ -242,7 +314,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--version-dir", required=True, type=Path)
     parser.add_argument("--implementation", choices=("c", "go"), default="go")
-    parser.add_argument("action", choices=("check", "start", "stop", "restart", "fsck", "gc"))
+    parser.add_argument("action", choices=("check", "start", "stop", "restart", "status", "fsck", "gc"))
     parser.add_argument("args", nargs=argparse.REMAINDER)
     args = parser.parse_args()
     if args.args and args.action not in ("fsck", "gc"):
@@ -255,6 +327,9 @@ def main() -> int:
         release = Release(args.version_dir.resolve(strict=True), args.implementation)
         if args.action == "check":
             check_config(release)
+            return 0
+        if args.action == "status":
+            print(json.dumps(status(release)))
             return 0
         release.pids.mkdir(exist_ok=True)
         with (release.pids / ".sqlite-release-operation.lock").open("a") as lock:

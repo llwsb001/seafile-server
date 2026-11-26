@@ -13,6 +13,7 @@ from pathlib import Path
 import select
 import signal
 import socket
+import sqlite3
 import subprocess
 import sys
 import time
@@ -76,9 +77,13 @@ class Release:
 
 def pid_from(path: Path) -> int | None:
     try:
-        pid = int(path.read_text())
+        data = path.read_text().strip()
     except FileNotFoundError:
         return None
+    # Both controllers create the PID file immediately before writing to it.
+    if not data:
+        return None
+    pid = int(data)
     if pid <= 1:
         raise ValueError(f"invalid PID in {path}")
     return pid
@@ -161,6 +166,12 @@ def http_ready(host: str, port: int) -> bool:
 
 def start(release: Release) -> None:
     assert_stopped(release)
+    if release.implementation == "c":
+        database = release.instance / "seafile-data/seafile.db"
+        with closing(sqlite3.connect(database.as_uri() + "?mode=ro", uri=True)) as db:
+            has_queue = db.execute("SELECT 1 FROM sqlite_schema WHERE name = 'GoFileWriteQueue' AND type = 'table'")
+            if has_queue.fetchone() and db.execute("SELECT 1 FROM GoFileWriteQueue LIMIT 1").fetchone():
+                raise RuntimeError("Go file write queue still contains work. Start Go and let it finish before C takeover.")
     host, port = check_config(release)
     try:
         with socket.create_connection((host, port), timeout=0.5):
@@ -238,6 +249,9 @@ def main() -> int:
         parser.error("trailing arguments require fsck or gc")
 
     try:
+        if not hasattr(os, "pidfd_open") or not hasattr(signal, "pidfd_send_signal"):
+            raise RuntimeError("use a Linux system Python with pidfd support")
+        os.close(os.pidfd_open(os.getpid()))
         release = Release(args.version_dir.resolve(strict=True), args.implementation)
         if args.action == "check":
             check_config(release)
@@ -265,7 +279,7 @@ def main() -> int:
                 )
                 return result.returncode
         return 0
-    except (ConfigError, OSError, RuntimeError, ValueError, subprocess.SubprocessError) as error:
+    except (ConfigError, OSError, RuntimeError, ValueError, sqlite3.Error, subprocess.SubprocessError) as error:
         print(f"SQLite release {args.action}: {error}", file=sys.stderr)
         return 1
 

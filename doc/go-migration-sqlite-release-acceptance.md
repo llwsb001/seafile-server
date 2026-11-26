@@ -22,7 +22,7 @@ v1–v8 回放使用兼容仓库 `98b9d9299f8880e66a0fde4738e226e73f320a9e`，v9
 | 安装包启停 | 确认带空格路径、缺失 JWT、端口占用、子进程恢复和错误版本的停止请求。未排空的 Go 队列阻止 C 接管，清空后原 C 继续读写。 [服务端 #75](https://github.com/llwsb001/seafile-server/pull/75) · [服务端 #79](https://github.com/llwsb001/seafile-server/pull/79) |
 | WebDAV 与通知 | 真实 DAV 通过 Unicode 创建、覆盖、校验下载以及只读拒绝。分别重启 DAV 和通知，两个客户端都收到期望提交并完成增量。Go 文件覆盖对显式过期 head 返回冲突。锁定 DAV 传入空 head。 [服务端 #76](https://github.com/llwsb001/seafile-server/pull/76) · [兼容测试 #64](https://github.com/llwsb001/seafile-compat-tests/pull/64) · [兼容测试 #65](https://github.com/llwsb001/seafile-compat-tests/pull/65) |
 | 快照恢复 | 归档包含已提交的 WAL 事务、对象和配置权限。恢复到两份新目录后，C 和 Go 都通过 fsck、读取及后续写入。arm64 样本恢复分别耗时 0.039 秒和 0.036 秒，从恢复到验证新写入及重启分别耗时 0.400 秒和 0.906 秒。活动 PID 或 socket、错误摘要、同名目标均被拒绝。 [服务端 #80](https://github.com/llwsb001/seafile-server/pull/80) |
-| v9 已安装接管 | 同一组合提交的原生 arm64 和本地 amd64 仿真全量回放通过。两端真实 Web、DAV 与两个客户端在 C → Go → C 后继续写入。已安装的 fsck、GC、普通、加密、虚拟与回收站样本均参与。 [兼容测试 #66](https://github.com/llwsb001/seafile-compat-tests/pull/66) |
+| v9 已安装接管 | 同一组合提交的原生 arm64、本地 amd64 仿真及 GitHub 原生 amd64 全量回放通过。真实 Web、DAV 与两个客户端在 C → Go → C 后继续写入。已安装的 fsck、GC、普通、加密、虚拟与回收站样本均参与。 [兼容测试 #66](https://github.com/llwsb001/seafile-compat-tests/pull/66) · [原生 amd64 回放](https://github.com/llwsb001/seafile-compat-tests/actions/runs/45748705665) |
 
 ## 部署与回退
 
@@ -32,5 +32,5 @@ v1–v8 回放使用兼容仓库 `98b9d9299f8880e66a0fde4738e226e73f320a9e`，v9
 
 ## 发行门槛
 
-- v9 CI 用同一完整 SHA 构建一次归档，并用该归档生成验收日志和摘要。脚本已在原生 arm64 走完构建和回放。GitHub 原生 amd64 验收及其产物以该次工作流为准。 [兼容测试 #68](https://github.com/llwsb001/seafile-compat-tests/pull/68)
+- v9 CI 用同一完整 SHA 构建一次归档，并用该归档生成验收日志和摘要。GitHub 原生 amd64 使用兼容仓库合并检出 `d25929415c337946a242e04a63123e106ee2f43d`，下载的归档摘要与本地构建一致。锁定组合候选的原生 v8 也通过。 [兼容测试 #68](https://github.com/llwsb001/seafile-compat-tests/pull/68) · [v9 归档及日志](https://github.com/llwsb001/seafile-compat-tests/actions/runs/45748705665) · [原生 v8](https://github.com/llwsb001/seafile-compat-tests/actions/runs/45748928862)
 - 性能回放已通过原生 arm64 的 C/Go 冒烟。锁定 C 两次持续负载均出现 `COMMIT` 和 `UPDATE VirtualRepo` 失败，虚拟库未与原库及 base commit 汇合。第二次的采样器全程未打开 C 数据库连接。WAL 诊断副本中的 C 在读取库时也报告 SQLite 锁冲突，真实 Web 查询返回 404。持续 C 基线没有通过，因此正式 C/Go 门槛暂未冻结。 [兼容测试 #67](https://github.com/llwsb001/seafile-compat-tests/pull/67)

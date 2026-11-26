@@ -29,6 +29,9 @@ const (
 // RPCHandlers exposes the repository reads using the existing Searpc names.
 func (r *Reader) RPCHandlers(config *ServerConfig) map[string]searpc.Handler {
 	return map[string]searpc.Handler{
+		"seafile_get_shared_users_for_subdir":  r.sharedUsersForSubdir,
+		"seafile_get_shared_groups_for_subdir": r.sharedGroupsForSubdir,
+
 		"seafile_get_repo":            r.getRepo,
 		"seafile_get_commit":          r.getCommit,
 		"seafile_get_commit_list":     r.commitList(config),
@@ -54,15 +57,11 @@ func (r *Reader) RPCHandlers(config *ServerConfig) map[string]searpc.Handler {
 		"seafile_get_file_id_by_commit_and_path": r.fileIDByCommitAndPath,
 		"seafile_get_dir_id_by_commit_and_path":  r.dirIDByCommitAndPath,
 
-		"seafile_list_share_repos":     r.listShareRepos,
-		"seafile_list_repo_shared_to":  r.listRepoSharedTo,
-		"get_shared_users_by_repo":     r.sharedUsersByRepo,
-		"org_get_shared_users_by_repo": r.orgSharedUsersByRepo,
-		"get_shared_repo_by_path":      r.personalSharedRepoByPath,
-
-		"seafile_get_shared_users_for_subdir":  r.sharedUsersForSubdir,
-		"seafile_get_shared_groups_for_subdir": r.sharedGroupsForSubdir,
-
+		"seafile_list_share_repos":          r.listShareRepos,
+		"seafile_list_repo_shared_to":       r.listRepoSharedTo,
+		"get_shared_users_by_repo":          r.sharedUsersByRepo,
+		"org_get_shared_users_by_repo":      r.orgSharedUsersByRepo,
+		"get_shared_repo_by_path":           r.personalSharedRepoByPath,
 		"seafile_list_repo_shared_group":    r.listRepoSharedGroup,
 		"seafile_get_shared_groups_by_repo": r.sharedGroupsByRepo,
 		"seafile_get_group_repoids":         r.groupRepoIDs,

@@ -40,6 +40,8 @@ func (r *Reader) RPCHandlers(config *ServerConfig) map[string]searpc.Handler {
 		"seafile_get_file_id_by_path": r.fileIDByPath,
 		"seafile_get_dir_id_by_path":  r.dirIDByPath,
 		"seafile_get_dirent_by_path":  r.direntByPath,
+		"seafile_get_file_size":       r.fileSize,
+		"seafile_get_dir_size":        r.dirSize,
 		"seafile_get_repo_owner":      r.getRepoOwner,
 		"seafile_is_repo_owner":       r.isRepoOwner,
 		"seafile_list_owned_repos":    r.listOwnedRepos,

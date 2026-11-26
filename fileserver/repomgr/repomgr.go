@@ -55,6 +55,8 @@ type Repo struct {
 	PwdHashAlgo   string
 	PwdHashParams string
 	Version       int
+
+	HasPwdHashParams bool
 }
 
 // VRepoInfo contains virtual repo information.
@@ -163,6 +165,7 @@ func Load(ctx context.Context, db repoQueryer, id string, loadCommit func(string
 			repo.PwdHash = commit.PwdHash
 			repo.PwdHashAlgo = commit.PwdHashAlgo
 			repo.PwdHashParams = commit.PwdHashParams
+			repo.HasPwdHashParams = commit.HasPwdHashParams
 		}
 	}
 
@@ -194,6 +197,7 @@ func RepoToCommit(repo *Repo, commit *commitmgr.Commit) {
 			commit.PwdHash = repo.PwdHash
 			commit.PwdHashAlgo = repo.PwdHashAlgo
 			commit.PwdHashParams = repo.PwdHashParams
+			commit.HasPwdHashParams = repo.HasPwdHashParams
 		}
 	} else {
 		commit.Encrypted = "false"
@@ -296,6 +300,7 @@ func GetEx(id string) *Repo {
 			repo.PwdHash = commit.PwdHash
 			repo.PwdHashAlgo = commit.PwdHashAlgo
 			repo.PwdHashParams = commit.PwdHashParams
+			repo.HasPwdHashParams = commit.HasPwdHashParams
 		}
 	}
 

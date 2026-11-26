@@ -50,9 +50,6 @@ func (r *Reader) RPCHandlers(config *ServerConfig) map[string]searpc.Handler {
 		"get_trash_repos_by_owner":    r.listTrashReposByOwner,
 		"get_trash_repo_owner":        r.getTrashRepoOwner,
 
-		"seafile_list_file_blocks":          r.listFileBlocks,
-		"seafile_check_repo_blocks_missing": r.checkRepoBlocksMissing,
-
 		"seafile_get_file_id_by_commit_and_path": r.fileIDByCommitAndPath,
 		"seafile_get_dir_id_by_commit_and_path":  r.dirIDByCommitAndPath,
 
@@ -65,13 +62,17 @@ func (r *Reader) RPCHandlers(config *ServerConfig) map[string]searpc.Handler {
 		"seafile_get_shared_groups_by_repo": r.sharedGroupsByRepo,
 		"seafile_get_group_repoids":         r.groupRepoIDs,
 		"get_group_repo_owner":              r.groupRepoOwner,
-		"seafile_get_repos_by_group":        r.listReposByGroup,
-		"get_group_repos_by_owner":          r.listGroupReposByOwner,
-		"repo_has_been_shared":              r.repoHasBeenShared,
-		"list_inner_pub_repos":              r.listInnerPublicRepos,
-		"list_inner_pub_repos_by_owner":     r.listInnerPublicReposByOwner,
-		"count_inner_pub_repos":             r.countInnerPublicRepos,
-		"is_inner_pub_repo":                 r.isInnerPublicRepo,
+
+		"seafile_list_file_blocks":          r.listFileBlocks,
+		"seafile_check_repo_blocks_missing": r.checkRepoBlocksMissing,
+
+		"seafile_get_repos_by_group":    r.listReposByGroup,
+		"get_group_repos_by_owner":      r.listGroupReposByOwner,
+		"repo_has_been_shared":          r.repoHasBeenShared,
+		"list_inner_pub_repos":          r.listInnerPublicRepos,
+		"list_inner_pub_repos_by_owner": r.listInnerPublicReposByOwner,
+		"count_inner_pub_repos":         r.countInnerPublicRepos,
+		"is_inner_pub_repo":             r.isInnerPublicRepo,
 	}
 }
 

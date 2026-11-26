@@ -44,6 +44,8 @@ make -C "$SEAFILE_COMPAT_TESTS" test-data IMPL=c-baseline FIXTURES_DIR="$SEAFILE
 
 SQLite 文件服务验收后的任务、依赖和复现命令见 [SQLite 库生命周期与离线运维迁移计划](go-migration-sqlite-lifecycle-maintenance.md)，覆盖剩余的阶段 5 库与文件操作及阶段 7 的离线工具和 controller。
 
+SQLite 发行回放后的探针排查、Go 持续负载和签收条件见 [SQLite 稳定性计划](go-migration-sqlite-stability.md)，延续阶段 8 的性能与持续运行验收。
+
 ## 写入切换与回退
 
 1. 灰度前，演练一次从一致的数据库和存储快照启动 C，再切到 Go 写入，最后用同一份数据启动 C。验证历史、权限、文件内容和新写入。

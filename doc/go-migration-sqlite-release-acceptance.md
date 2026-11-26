@@ -35,3 +35,5 @@ v1–v8 回放使用兼容仓库 `98b9d9299f8880e66a0fde4738e226e73f320a9e`，v9
 - v9 CI 用同一完整 SHA 构建一次归档，并用该归档生成验收日志和摘要。GitHub 原生 amd64 使用兼容仓库合并检出 `d25929415c337946a242e04a63123e106ee2f43d`，下载的归档摘要与本地构建一致。锁定组合候选的原生 v8 也通过。 [兼容测试 #68](https://github.com/llwsb001/seafile-compat-tests/pull/68) · [v9 归档及日志](https://github.com/llwsb001/seafile-compat-tests/actions/runs/45748705665) · [原生 v8](https://github.com/llwsb001/seafile-compat-tests/actions/runs/45748928862)
 - 性能回放已通过原生 arm64 的 C/Go 冒烟。锁定 C 两次持续负载均出现 `COMMIT` 和 `UPDATE VirtualRepo` 失败，虚拟库未与原库及 base commit 汇合。第二次的采样器全程未打开 C 数据库连接。WAL 诊断副本中的 C 在读取库时也报告 SQLite 锁冲突，真实 Web 查询返回 404。持续 C 基线没有通过，因此正式 C/Go 门槛暂未冻结。 [兼容测试 #67](https://github.com/llwsb001/seafile-compat-tests/pull/67)
 - 上述归档摘要和耗时对应回放时的组合提交。最终签收时核对候选归档 SHA-256 与实测归档一致。摘要变化时，使用最终归档重跑性能和持续运行验收。
+
+持续负载的探针排查和 Go 独立验收见 [SQLite 稳定性计划](go-migration-sqlite-stability.md)。

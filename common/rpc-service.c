@@ -4358,11 +4358,14 @@ seafile_set_base_commit (const char *repo_id,
         return -1;
     }
 
-    seaf_repo_manager_set_virtual_repo_base_commit_path (seaf->repo_mgr,
-                                                         repo_id, base_commit,
-                                                         vinfo->path);
-
+    int ret = seaf_repo_manager_set_virtual_repo_base_commit_path (seaf->repo_mgr,
+                                                                   repo_id, base_commit,
+                                                                   NULL);
     seaf_virtual_repo_info_free (vinfo);
+    if (ret < 0) {
+        g_set_error (error, SEAFILE_DOMAIN, SEAF_ERR_GENERAL, "Internal server error");
+        return -1;
+    }
     return 0;
 }
 

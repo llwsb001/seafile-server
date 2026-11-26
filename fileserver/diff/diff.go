@@ -38,14 +38,21 @@ func DiffTrees(n int, roots []string, opt *DiffOptions) error {
 	reader := fsmgr.GetOneZlibReader()
 	defer fsmgr.ReturnOneZlibReader(reader)
 	opt.Reader = reader
+	return diffTrees(n, roots, opt, func(id string) (*fsmgr.SeafDir, error) {
+		return fsmgr.GetSeafdirWithZlibReader(opt.RepoID, id, reader)
+	})
+}
 
+type readDirectory func(string) (*fsmgr.SeafDir, error)
+
+func diffTrees(n int, roots []string, opt *DiffOptions, readDir readDirectory) error {
 	if n != 2 && n != 3 {
 		err := fmt.Errorf("the number of commit trees is illegal")
 		return err
 	}
 	trees := make([]*fsmgr.SeafDir, n)
 	for i := 0; i < n; i++ {
-		root, err := fsmgr.GetSeafdirWithZlibReader(opt.RepoID, roots[i], opt.Reader)
+		root, err := readDir(roots[i])
 		if err != nil {
 			err := fmt.Errorf("Failed to find dir %s:%s", opt.RepoID, roots[i])
 			return err
@@ -53,10 +60,10 @@ func DiffTrees(n int, roots []string, opt *DiffOptions) error {
 		trees[i] = root
 	}
 
-	return diffTreesRecursive(n, trees, "", opt)
+	return diffTreesRecursive(n, trees, "", opt, readDir)
 }
 
-func diffTreesRecursive(n int, trees []*fsmgr.SeafDir, baseDir string, opt *DiffOptions) error {
+func diffTreesRecursive(n int, trees []*fsmgr.SeafDir, baseDir string, opt *DiffOptions, readDir readDirectory) error {
 	ptrs := make([][]*fsmgr.SeafDirent, 3)
 
 	for i := 0; i < n; i++ {
@@ -115,7 +122,7 @@ func diffTreesRecursive(n int, trees []*fsmgr.SeafDir, baseDir string, opt *Diff
 		if err := diffFiles(n, baseDir, dents, opt); err != nil {
 			return err
 		}
-		if err := diffDirectories(n, baseDir, dents, opt); err != nil {
+		if err := diffDirectories(n, baseDir, dents, opt, readDir); err != nil {
 			return err
 		}
 	}
@@ -139,7 +146,7 @@ func diffFiles(n int, baseDir string, dents []*fsmgr.SeafDirent, opt *DiffOption
 	return opt.FileCB(opt.Ctx, baseDir, files, opt.Data)
 }
 
-func diffDirectories(n int, baseDir string, dents []*fsmgr.SeafDirent, opt *DiffOptions) error {
+func diffDirectories(n int, baseDir string, dents []*fsmgr.SeafDirent, opt *DiffOptions, readDir readDirectory) error {
 	dirs := make([]*fsmgr.SeafDirent, 3)
 	subDirs := make([]*fsmgr.SeafDir, 3)
 	var nDirs int
@@ -167,7 +174,7 @@ func diffDirectories(n int, baseDir string, dents []*fsmgr.SeafDirent, opt *Diff
 	var dirName string
 	for i := 0; i < n; i++ {
 		if dents[i] != nil && fsmgr.IsDir(dents[i].Mode) {
-			dir, err := fsmgr.GetSeafdirWithZlibReader(opt.RepoID, dents[i].ID, opt.Reader)
+			dir, err := readDir(dents[i].ID)
 			if err != nil {
 				err := fmt.Errorf("Failed to find dir %s:%s", opt.RepoID, dents[i].ID)
 				return err
@@ -178,7 +185,7 @@ func diffDirectories(n int, baseDir string, dents []*fsmgr.SeafDirent, opt *Diff
 	}
 
 	newBaseDir := baseDir + dirName + "/"
-	return diffTreesRecursive(n, subDirs, newBaseDir, opt)
+	return diffTreesRecursive(n, subDirs, newBaseDir, opt, readDir)
 }
 
 func direntSame(dentA, dentB *fsmgr.SeafDirent) bool {

@@ -93,11 +93,9 @@ func (r *Reader) commitList(config *ServerConfig) searpc.Handler {
 
 func (r *Reader) collectCommits(repoID string, head *commitmgr.Commit, offset, limit int, truncate int64) []map[string]any {
 	var result []map[string]any
-	visited := map[string]bool{head.CommitID: true}
-	pending := []*commitmgr.Commit{head}
-	for index := 0; len(pending) > 0; index++ {
-		commit := pending[0]
-		pending = pending[1:]
+	queue := newCommitQueue(r, repoID, head)
+	for index := 0; len(queue.pending) > 0; index++ {
+		commit := queue.pop()
 		if index >= offset {
 			result = append(result, commitObject(commit))
 			if limit > 0 && len(result) == limit {
@@ -107,21 +105,43 @@ func (r *Reader) collectCommits(repoID string, head *commitmgr.Commit, offset, l
 		if truncate == 0 || (truncate > 0 && index > 0 && commit.Ctime <= truncate) {
 			continue
 		}
-		for _, parent := range []commitmgr.String{commit.ParentID, commit.SecondParentID} {
-			if !parent.Valid || visited[parent.String] {
-				continue
-			}
-			next, err := r.Commit(repoID, parent.String)
-			if err != nil {
-				continue
-			}
-			visited[parent.String] = true
-			// Like the C queue, visit newer commits first and prepend ties.
-			position := sort.Search(len(pending), func(i int) bool { return pending[i].Ctime <= next.Ctime })
-			pending = append(pending, nil)
-			copy(pending[position+1:], pending[position:])
-			pending[position] = next
-		}
+		queue.addParents(commit)
 	}
 	return result
+}
+
+type commitQueue struct {
+	reader  *Reader
+	repoID  string
+	visited map[string]bool
+	pending []*commitmgr.Commit
+}
+
+func newCommitQueue(r *Reader, repoID string, head *commitmgr.Commit) *commitQueue {
+	return &commitQueue{r, repoID, map[string]bool{head.CommitID: true}, []*commitmgr.Commit{head}}
+}
+
+func (q *commitQueue) pop() *commitmgr.Commit {
+	next := q.pending[0]
+	q.pending[0] = nil
+	q.pending = q.pending[1:]
+	return next
+}
+
+func (q *commitQueue) addParents(commit *commitmgr.Commit) {
+	for _, parent := range []commitmgr.String{commit.ParentID, commit.SecondParentID} {
+		if !parent.Valid || q.visited[parent.String] {
+			continue
+		}
+		next, err := q.reader.Commit(q.repoID, parent.String)
+		if err != nil {
+			continue
+		}
+		q.visited[parent.String] = true
+		// Like the C queue, visit newer commits first and prepend ties.
+		position := sort.Search(len(q.pending), func(i int) bool { return q.pending[i].Ctime <= next.Ctime })
+		q.pending = append(q.pending, nil)
+		copy(q.pending[position+1:], q.pending[position:])
+		q.pending[position] = next
+	}
 }

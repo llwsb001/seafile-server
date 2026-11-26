@@ -48,6 +48,7 @@ func (r *Reader) FileWriteRPCHandlers(ctx context.Context, db *sql.DB, identity 
 	return map[string]searpc.Handler{
 		"seafile_revert_on_server":   writer.revertRepo,
 		"seafile_post_empty_file":    writer.edit(4, createFileEntry(false)),
+		"seafile_put_file":           writer.putFile,
 		"seafile_post_dir":           writer.edit(4, createFileEntry(true)),
 		"seafile_mkdir_with_parents": writer.edit(4, mkdirWithParents),
 		"seafile_del_file":           writer.edit(4, deleteFiles),

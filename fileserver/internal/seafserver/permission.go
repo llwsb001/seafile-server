@@ -28,6 +28,7 @@ func (r *Reader) PermissionRPCHandlers(identity *Identity, cloudMode bool) map[s
 		"get_org_group_repos_by_user":   r.listGroupReposByUser(identity, true),
 		"get_group_shared_repo_by_path": r.groupSharedRepoByPath(identity),
 		"convert_repo_path":             r.convertSharedRepoPath(identity),
+		"get_virtual_repos_by_owner":    r.listVirtualReposByOwner(permissions),
 	}
 }
 

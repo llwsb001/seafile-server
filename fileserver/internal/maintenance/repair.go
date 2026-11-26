@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 
@@ -111,6 +110,14 @@ func (changes repairChanges) description() string {
 }
 
 func (c *repoCheck) removeDamagedBlocks() {
+	if len(c.repair.blocks) == 0 {
+		return
+	}
+	root, err := canonicalPath(c.store.dataDir)
+	if err != nil {
+		c.log("Failed to resolve the source data directory: %v.", err)
+		return
+	}
 	ids := make([]string, 0, len(c.repair.blocks))
 	for id := range c.repair.blocks {
 		ids = append(ids, id)
@@ -129,8 +136,7 @@ func (c *repoCheck) removeDamagedBlocks() {
 		if hex.EncodeToString(digest.Sum(nil)) == id {
 			continue
 		}
-		path := filepath.Join(c.store.dataDir, "storage", "blocks", c.repo.StoreID, id[:2], id[2:])
-		if err := os.Remove(path); err != nil {
+		if err := removeGCObject(root, "blocks", c.repo.StoreID, id); err != nil {
 			c.log("Failed to remove damaged block %s: %v.", id, err)
 			continue
 		}

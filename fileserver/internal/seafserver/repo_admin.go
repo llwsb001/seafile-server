@@ -20,6 +20,8 @@ func (r *Reader) AdminRepoReadRPCHandlers() map[string]searpc.Handler {
 		"seafile_search_repos_by_name":   r.searchAdminReposByName,
 		"seafile_get_repos_by_id_prefix": r.searchAdminReposByIDPrefix,
 		"get_system_default_repo_id":     r.getSystemDefaultRepoID,
+		"seafile_server_repo_size":       r.adminRepoSize,
+		"seafile_get_orphan_repo_list":   r.listOrphanRepos,
 	}
 }
 

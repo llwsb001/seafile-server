@@ -216,3 +216,49 @@ func TestAdminSystemDefaultRepo(t *testing.T) {
 	}
 	checkDefault(`"` + adminFirst + `"`)
 }
+
+func TestAdminRepoStorageAndOrphans(t *testing.T) {
+	reader := adminRepoFixture(t)
+	const (
+		sizeRPC   = "seafile_server_repo_size"
+		orphanRPC = "seafile_get_orphan_repo_list"
+	)
+	for _, test := range []struct {
+		id        any
+		size      int64
+		errorText string
+	}{
+		{adminFirst, 5, ""},
+		{adminVirtual, 99, ""},
+		{adminMissing, 0, ""},
+		{adminStale, 100, ""},
+		{"12345678-aaaa-4000-8000-000000000099", 0, ""},
+		{nil, -1, "Bad repo id"},
+		{"short", -1, "Bad repo id"},
+		{"12345678-aaaa-4000-8000-0000000000ZZ", -1, "Invalid repo id"},
+	} {
+		value, rpcErr := callAdminRepoRPC(t, reader, sizeRPC, test.id)
+		if value != test.size ||
+			(test.errorText == "" && rpcErr != nil) ||
+			(test.errorText != "" && (rpcErr == nil || rpcErr.Code != errBadArgs || rpcErr.Message != test.errorText)) {
+			t.Fatalf("size(%v) = %v, %v", test.id, value, rpcErr)
+		}
+	}
+
+	const owner = "admin@example.test"
+	created, rpcErr := reader.createRepo(context.Background(), reader.db, fileWriteRPCArgs(t, "Orphan library", "From the head", owner))
+	if rpcErr != nil {
+		t.Fatal(rpcErr)
+	}
+	id := created.(string)
+	checkAdminRepoIDs(t, listAdminRepoRPC(t, reader, orphanRPC), nil)
+	if _, err := reader.db.Exec("DELETE FROM RepoOwner WHERE repo_id = ?", id); err != nil {
+		t.Fatal(err)
+	}
+	repos := listAdminRepoRPC(t, reader, orphanRPC)
+	checkAdminRepoIDs(t, repos, []string{id})
+	if got := repos[0]; got["repo-name"] != "Orphan library" || got["repo-desc"] != "From the head" ||
+		got["store-id"] != id || got["root"] != "0000000000000000000000000000000000000000" {
+		t.Fatalf("orphan repository object = %+v", got)
+	}
+}

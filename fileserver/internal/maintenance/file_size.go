@@ -14,32 +14,50 @@ import (
 )
 
 func (s *Store) historyCutoff(ctx context.Context, repo Repo, now time.Time) int64 {
+	cutoff, err := s.readHistoryCutoff(ctx, repo, now)
+	if err != nil {
+		return -1
+	}
+	return cutoff
+}
+
+func (s *Store) readHistoryCutoff(ctx context.Context, repo Repo, now time.Time) (int64, error) {
 	var days int
-	err := s.db.QueryRowContext(ctx, "SELECT days FROM RepoHistoryLimit WHERE repo_id = ?", repo.StoreID).Scan(&days)
+	err := s.db.QueryRowContext(ctx, "SELECT COALESCE(days, 0) FROM RepoHistoryLimit WHERE repo_id = ?", repo.StoreID).Scan(&days)
 	if errors.Is(err, sql.ErrNoRows) {
 		days = s.defaultDays
-		var value string
+		var value sql.NullString
 		const query = "SELECT value FROM SeafileConf WHERE cfg_group = 'history' AND cfg_key = 'keep_days'"
-		if s.db.QueryRowContext(ctx, query).Scan(&value) == nil {
-			days, err = strconv.Atoi(value)
-			if err != nil {
+		err = s.db.QueryRowContext(ctx, query).Scan(&value)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return 0, err
+		}
+		if value.Valid {
+			text := strings.TrimSpace(value.String)
+			parsed, err := strconv.ParseInt(text, 10, 64)
+			days = int(int32(parsed))
+			if err != nil && text != "" && !errors.Is(err, strconv.ErrRange) {
 				days = -1
 			}
 		}
 	} else if err != nil {
-		days = -1
+		return 0, err
 	}
 	if days == 0 {
-		return 0
+		return 0, nil
 	}
 	var since int64
-	if s.db.QueryRowContext(ctx, "SELECT timestamp FROM RepoValidSince WHERE repo_id = ?", repo.ID).Scan(&since) != nil {
+	err = s.db.QueryRowContext(ctx, "SELECT COALESCE(timestamp, 0) FROM RepoValidSince WHERE repo_id = ?", repo.ID).Scan(&since)
+	if errors.Is(err, sql.ErrNoRows) {
 		since = -1
+	} else if err != nil {
+		return 0, err
 	}
 	if days < 0 {
-		return since
+		return since, nil
 	}
-	return max(since, now.Unix()-int64(days)*24*60*60)
+	// C multiplies the signed 32-bit day count before subtracting from Unix time.
+	return max(since, now.Unix()-int64(int32(days)*86400)), nil
 }
 
 func (c *repoCheck) reportFileSize(ctx context.Context, path, id string) {

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/haiwen/seafile-server/fileserver/commitmgr"
 	"github.com/haiwen/seafile-server/fileserver/searpc"
@@ -82,28 +81,21 @@ func (r *Reader) commitList(config *ServerConfig) searpc.Handler {
 			return nil, rpcError(507, "Failed to list commits")
 		}
 
-		days := r.historyLimit(ctx, *repoID, config)
-		truncate := int64(-1)
-		if days == 0 {
-			truncate = 0
-		} else {
-			_ = r.db.QueryRowContext(ctx, "SELECT timestamp FROM RepoValidSince WHERE repo_id = ?", *repoID).Scan(&truncate)
-			if days > 0 {
-				truncate = max(truncate, time.Now().Unix()-int64(days)*24*60*60)
-			}
-		}
+		truncate := r.historyTruncateTime(ctx, *repoID, config)
 		offset, limit := max(0, intArgument(args, 1)), intArgument(args, 2)
-		return r.collectCommits(head, offset, limit, truncate), nil
+		// C compares the visit count against an end offset held in a signed int.
+		if limit > 0 && int32(offset)+int32(limit) < 0 {
+			return nil, nil
+		}
+		return r.collectCommits(*repoID, head, offset, limit, truncate), nil
 	}
 }
 
-func (r *Reader) collectCommits(head *commitmgr.Commit, offset, limit int, truncate int64) []map[string]any {
+func (r *Reader) collectCommits(repoID string, head *commitmgr.Commit, offset, limit int, truncate int64) []map[string]any {
 	var result []map[string]any
-	visited := map[string]bool{head.CommitID: true}
-	pending := []*commitmgr.Commit{head}
-	for index := 0; len(pending) > 0; index++ {
-		commit := pending[0]
-		pending = pending[1:]
+	queue := newCommitQueue(r, repoID, head)
+	for index := 0; len(queue.pending) > 0; index++ {
+		commit := queue.pop()
 		if index >= offset {
 			result = append(result, commitObject(commit))
 			if limit > 0 && len(result) == limit {
@@ -113,21 +105,43 @@ func (r *Reader) collectCommits(head *commitmgr.Commit, offset, limit int, trunc
 		if truncate == 0 || (truncate > 0 && index > 0 && commit.Ctime <= truncate) {
 			continue
 		}
-		for _, parent := range []commitmgr.String{commit.ParentID, commit.SecondParentID} {
-			if !parent.Valid || visited[parent.String] {
-				continue
-			}
-			visited[parent.String] = true
-			next, err := r.Commit(commit.RepoID, parent.String)
-			if err != nil {
-				continue
-			}
-			// Like the C queue, visit newer commits first and prepend ties.
-			position := sort.Search(len(pending), func(i int) bool { return pending[i].Ctime <= next.Ctime })
-			pending = append(pending, nil)
-			copy(pending[position+1:], pending[position:])
-			pending[position] = next
-		}
+		queue.addParents(commit)
 	}
 	return result
+}
+
+type commitQueue struct {
+	reader  *Reader
+	repoID  string
+	visited map[string]bool
+	pending []*commitmgr.Commit
+}
+
+func newCommitQueue(r *Reader, repoID string, head *commitmgr.Commit) *commitQueue {
+	return &commitQueue{r, repoID, map[string]bool{head.CommitID: true}, []*commitmgr.Commit{head}}
+}
+
+func (q *commitQueue) pop() *commitmgr.Commit {
+	next := q.pending[0]
+	q.pending[0] = nil
+	q.pending = q.pending[1:]
+	return next
+}
+
+func (q *commitQueue) addParents(commit *commitmgr.Commit) {
+	for _, parent := range []commitmgr.String{commit.ParentID, commit.SecondParentID} {
+		if !parent.Valid || q.visited[parent.String] {
+			continue
+		}
+		next, err := q.reader.Commit(q.repoID, parent.String)
+		if err != nil {
+			continue
+		}
+		q.visited[parent.String] = true
+		// Like the C queue, visit newer commits first and prepend ties.
+		position := sort.Search(len(q.pending), func(i int) bool { return q.pending[i].Ctime <= next.Ctime })
+		q.pending = append(q.pending, nil)
+		copy(q.pending[position+1:], q.pending[position:])
+		q.pending[position] = next
+	}
 }

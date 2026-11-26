@@ -5,6 +5,7 @@ import (
 	"os"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/haiwen/seafile-server/fileserver/commitmgr"
 	"github.com/haiwen/seafile-server/fileserver/fsmgr"
@@ -27,6 +28,67 @@ var mergeTestTree1CommitID string
 var mergeTestTree2CommitID string
 var mergeTestTree3CommitID string
 var mergeTestTree4CommitID string
+
+func TestSQLiteMergeDirectoryConflictName(t *testing.T) {
+	dbType, jwtKey := option.DBType, option.JWTPrivateKey
+	option.DBType, option.JWTPrivateKey = "sqlite", ""
+	t.Cleanup(func() {
+		option.DBType, option.JWTPrivateKey = dbType, jwtKey
+	})
+
+	root := t.TempDir()
+	commitmgr.Init(root, root)
+	fsmgr.Init(root, root, option.FsCacheLimit)
+
+	const name = "shared.report.txt"
+	const creator = "remote@example.test"
+	remoteDir := fsmgr.SeafDirent{
+		ID: "0000000000000000000000000000000000000000", Name: name,
+		Mode: syscall.S_IFDIR | 0755, Mtime: 1795625430,
+	}
+	dir, err := fsmgr.NewSeafdir(1, []*fsmgr.SeafDirent{&remoteDir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := fsmgr.SaveSeafdir(mergeTestRepoID, dir); err != nil {
+		t.Fatal(err)
+	}
+	remoteCommit := commitmgr.NewCommit(mergeTestRepoID, "", dir.DirID, creator, "Add directory")
+	if err := commitmgr.Save(remoteCommit); err != nil {
+		t.Fatal(err)
+	}
+
+	head := &fsmgr.SeafDirent{ID: "head", Name: name, Mode: syscall.S_IFREG | 0644}
+	for _, tc := range []struct {
+		name string
+		base *fsmgr.SeafDirent
+	}{
+		{name: "concurrent additions"},
+		{name: "replace modified file", base: &fsmgr.SeafDirent{ID: "base", Name: name, Mode: head.Mode}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			opt := mergeOptions{
+				remoteRepoID: mergeTestRepoID, remoteHead: remoteCommit.CommitID,
+				emailToNickname: make(map[string]string),
+			}
+			remote := remoteDir
+			before := time.Now().Truncate(time.Second)
+			files, err := mergeEntries(mergeTestRepoID, []*fsmgr.SeafDirent{tc.base, head, &remote}, "", &opt)
+			after := time.Now().Truncate(time.Second)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !opt.conflict || len(files) != 1 || files[0] != head || head.Name != name {
+				t.Fatalf("merge should keep the local file with its original name: %+v", files)
+			}
+			const format = "shared.report (SFConflict " + creator + " 2006-01-02-15-04-05).txt"
+			timestamp, err := time.ParseInLocation(format, remote.Name, time.Local)
+			if err != nil || timestamp.Before(before) || timestamp.After(after) {
+				t.Fatalf("conflict name %q must contain the remote author and the merge time (%s to %s)", remote.Name, before, after)
+			}
+		})
+	}
+}
 
 /*
 test directory structure:

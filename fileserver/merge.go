@@ -191,9 +191,8 @@ func mergeEntries(storeID string, dents []*fsmgr.SeafDirent, baseDir string, opt
 	} else if base != nil && head != nil && remote == nil {
 		if base.ID != head.ID {
 			if dents[2] != nil {
-				conflictName, _ := mergeConflictFileName(storeID, opt, baseDir, dents[2].Name)
-				if conflictName == "" {
-					err := fmt.Errorf("failed to generate conflict file name")
+				conflictName, err := mergeConflictDirName(storeID, opt, baseDir, dents[2].Name)
+				if err != nil {
 					return nil, err
 				}
 				dents[2].Name = conflictName
@@ -224,9 +223,8 @@ func mergeEntries(storeID string, dents []*fsmgr.SeafDirent, baseDir string, opt
 		} else if dents[0] != nil && dents[0].ID == dents[2].ID {
 			mergedDents = append(mergedDents, head)
 		} else {
-			conflictName, _ := mergeConflictFileName(storeID, opt, baseDir, dents[2].Name)
-			if conflictName == "" {
-				err := fmt.Errorf("failed to generate conflict file name")
+			conflictName, err := mergeConflictDirName(storeID, opt, baseDir, dents[2].Name)
+			if err != nil {
 				return nil, err
 			}
 			dents[2].Name = conflictName
@@ -345,6 +343,21 @@ func mergeConflictFileName(storeID string, opt *mergeOptions, baseDir, fileName 
 	conflictName := genConflictPath(fileName, nickname, mtime)
 
 	return conflictName, nil
+}
+
+func mergeConflictDirName(storeID string, opt *mergeOptions, baseDir, dirName string) (string, error) {
+	if option.DBType != "sqlite" {
+		return mergeConflictFileName(storeID, opt, baseDir, dirName)
+	}
+
+	// The C server names directory conflicts after the remote commit author and merge time.
+	commit, err := commitmgr.Load(opt.remoteRepoID, opt.remoteHead)
+	if err != nil {
+		return "", fmt.Errorf("load remote head for directory conflict %q: %w", dirName, err)
+	}
+
+	nickname := getNickNameByModifier(opt.emailToNickname, commit.CreatorName)
+	return genConflictPath(dirName, nickname, time.Now().Unix()), nil
 }
 
 func genConflictPath(originPath, modifier string, mtime int64) string {

@@ -30,11 +30,11 @@ C 的 A 组有一轮收到 8 次普通库写入确认。停服时统计仍为 7 
 
 ```sh
 cd "$SEAFILE_COMPAT_TESTS"
-SQLITE_CI_GO_LOAD=1 SQLITE_CI_GO_REVISION=0f2289874dfa21da92295e2f89bd322204970181 \
+SQLITE_CI_GO_LOAD=1 SQLITE_CI_GO_REVISION=5e6a1cefe1897c51a69b94c0a1395a5cd5c1c7c2 \
   bash ci/test-sqlite-release.sh "$OUTPUT_DIRECTORY"
 ```
 
-## Go 独立持续负载结果
+## 首次通过的 Go 独立持续负载
 
 服务端发行候选为 `0f2289874dfa21da92295e2f89bd322204970181`。各轮统计排除预热，重启后的文件数量包含预热写入及回放中的删除结果。
 
@@ -51,6 +51,33 @@ amd64 使用兼容仓库合并检出 `58c77e0d9b0153a2c20a17a980a10243733155a6`�
 
 arm64 补充运行使用预构建的锁定 Linux 环境及兼容分支 `c78d1527c7eb93c1442cdfa4aecf40e90f1cb2b0` 的负载运行器。归档 SHA-256 为 `5409f4834f8fc5f3873714b51df8ef4242793731585b2043689e550d3ca4c049`。虚拟库收敛 p95 为 97.85 毫秒，三轮停写后的最长排空检查耗时为 7.71 毫秒。同一归档随后通过原生 arm64 v9 安装、快照恢复和同数据 C 接管。
 
+## Go 库读取持锁复现
+
+候选 `0f22898` 完成过整套独立验收。审阅后的同归档再次运行时，第二轮普通库上传 `web-23.bin` 收到成功响应，紧接着 Seahub 取下载链接返回 404。同轮 fileserver 曾记录处理 SQLite 写入队列时的 `SQLITE_BUSY`。两处日志相隔约 31 秒，单凭这次日志无法判断是否同一次锁冲突。 [审阅后的失败回放](https://github.com/llwsb001/seafile-compat-tests/actions/runs/45755022191)
+
+用已安装的 `0f22898` 归档通过真实 Seahub 上传普通文件，再由另一连接短时持有 SQLite 排他写锁。下载链接请求在约 0.29 秒后返回 404，响应为 `Library not found.`。释放锁后读到已确认上传的文件。回归用例也验证了锁持有超过原 250 毫秒等待时间时，Go 库查询会提前返回空结果。
+
+Go 修复将只读连接的等待上限设为 2 秒，保留写连接原有的 250 毫秒。库查询持续遇到 `SQLITE_BUSY` 时返回内部错误，确实不存在的库仍返回空结果。相同的 arm64 HTTP 回放使用修复候选 `5e6a1cefe1897c51a69b94c0a1395a5cd5c1c7c2`，等待约 0.86 秒后返回 200，下载摘要正确。C 源码和锁定版本沿用原状。 [Go 修复](https://github.com/llwsb001/seafile-server/pull/84)
+
+## 修复后复验
+
+锁定 Go 工具链下，Linux 核心、controller、fileserver 和离线维护包测试通过。原生 arm64 归档通过 v1 的 113 个静态对象和 41 个 RPC 场景、v2–v6 以及 v9 安装、快照恢复和同数据 C 接管。arm64 归档 SHA-256 为 `6c3821efb4e1915d508031d7d7fdeadb521ac03ccf6fd9e379e170341aa45cbf`。
+
+原生 amd64 的 v7 和 v8 使用同一个完整 Go 提交。v8 也完成了离线维护、controller 和虚拟库恢复队列接管。 [修复候选 v7](https://github.com/llwsb001/seafile-compat-tests/actions/runs/45756644932) · [修复候选 v8](https://github.com/llwsb001/seafile-compat-tests/actions/runs/45756651919)
+
+| 架构 | 轮次 | 测量时长（秒） | 完整循环 | 重启后核对的同步文件 | 重启后核对的虚拟文件 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| amd64 | 1 | 180.31 | 45 | 2943 | 46 |
+| amd64 | 2 | 180.30 | 45 | 2943 | 46 |
+| amd64 | 3 | 181.33 | 47 | 3071 | 48 |
+| arm64 | 1 | 183.03 | 52 | 3391 | 53 |
+| arm64 | 2 | 184.76 | 54 | 3519 | 55 |
+| arm64 | 3 | 180.99 | 52 | 3391 | 53 |
+
+原生 arm64 的修复归档共完成 158 个完整循环，虚拟库收敛 p95 为 95.99 毫秒，最长排空检查为 6.07 毫秒。用同一归档完成 v9，核对了 Go 和 C 的实际进程、快照恢复和回退后的继续写入。
+
+原生 amd64 用兼容仓库 `82cd1b0d295286d67e78d697177bf69b52326942` 和工作流的 `go_revision` 参数验证修复提交。一次构建同时用于持续负载和 v9，归档 SHA-256 为 `24eaa80ee49ae9846ec98055a87ea28e4712d9bf967f62c68210b5c115368bf8`。三轮共完成 137 个完整循环，虚拟库收敛 p95 为 72.98 毫秒，最长排空检查为 0.31 毫秒。每轮通过停服完整性、fsck、数据摘要和重启后增量。v9 通过同数据 C → Go → C、快照恢复及离线维护。 [修复归档、原始报告与 v9 日志](https://github.com/llwsb001/seafile-compat-tests/actions/runs/45756644347)
+
 ## 签收状态
 
-候选 `0f22898` 完成过整套独立验收。审阅后的同归档再次运行时，第二轮普通库上传 `web-23.bin` 收到成功响应，紧接着 Seahub 取下载链接返回 404。同轮 fileserver 曾记录一条处理 SQLite 文件写入队列时的 `SQLITE_BUSY`，两者的关系待确认。Go 独立稳定性因此重新标为待复验。兼容回归及同数据回退继续使用锁定 C。已记录的 C 持续负载基线仍未完成，C/Go 相对阈值与发行签收保持待通过。 [审阅后的失败回放](https://github.com/llwsb001/seafile-compat-tests/actions/runs/45755022191) · [现有发行门槛](go-migration-sqlite-release-acceptance.md#发行门槛)
+修复候选 `5e6a1ce` 通过 Go 独立持续负载和 v1–v9。服务端 `315e07b` 合入修复，运行时代码与实测提交一致。兼容回归及同数据回退继续使用锁定 C。已记录的 C 持续负载基线仍未完成，C/Go 相对阈值与发行签收保持待通过。 [现有发行门槛](go-migration-sqlite-release-acceptance.md#发行门槛)

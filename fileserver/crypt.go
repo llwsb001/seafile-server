@@ -1,12 +1,6 @@
 package main
 
-import (
-	"bytes"
-	"crypto/aes"
-	"crypto/cipher"
-
-	"github.com/haiwen/seafile-server/fileserver/internal/repocrypt"
-)
+import "github.com/haiwen/seafile-server/fileserver/internal/repocrypt"
 
 type seafileCrypt struct {
 	key     []byte
@@ -15,44 +9,9 @@ type seafileCrypt struct {
 }
 
 func (crypt *seafileCrypt) encrypt(input []byte) ([]byte, error) {
-	key := crypt.key
-	if crypt.version == 3 {
-		key = to16Bytes(key)
-	}
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return nil, err
-	}
-	size := block.BlockSize()
-	input = pkcs7Padding(input, size)
-	out := make([]byte, len(input))
-
-	if crypt.version == 3 {
-		for bs, be := 0, size; bs < len(input); bs, be = bs+size, be+size {
-			block.Encrypt(out[bs:be], input[bs:be])
-		}
-		return out, nil
-	}
-
-	blockMode := cipher.NewCBCEncrypter(block, crypt.iv)
-	blockMode.CryptBlocks(out, input)
-
-	return out, nil
+	return repocrypt.Encrypt(crypt.version, crypt.key, crypt.iv, input)
 }
 
 func (crypt *seafileCrypt) decrypt(input []byte) ([]byte, error) {
 	return repocrypt.Decrypt(crypt.version, crypt.key, crypt.iv, input)
-}
-
-func pkcs7Padding(p []byte, blockSize int) []byte {
-	padding := blockSize - len(p)%blockSize
-	padtext := bytes.Repeat([]byte{byte(padding)}, padding)
-	return append(p, padtext...)
-}
-
-func to16Bytes(input []byte) []byte {
-	out := make([]byte, 16)
-	copy(out, input)
-
-	return out
 }

@@ -86,9 +86,6 @@ func (w *fileWriter) moveTrees(ctx context.Context, move libraryTransfer) ([2]*f
 		if rpcErr != nil {
 			return trees, rpcErr
 		}
-		if tree.repo.IsEncrypted {
-			return trees, rpcError(errBadArgs, "Cross-library move requires unencrypted libraries")
-		}
 		trees[i] = tree
 	}
 	return trees, nil
@@ -101,15 +98,18 @@ func (w *fileWriter) runCrossMove(ctx context.Context, move libraryTransfer, tas
 			return rpcErr
 		}
 		from, to := trees[0], trees[1]
-		copy := libraryCopy{ctx: ctx, from: from, to: to, task: task, limits: w.limits}
-		fromDesc, toDesc, rpcErr := copy.apply(move, w.quota)
+		toDesc, rpcErr := w.copyAcrossLibraries(ctx, from, to, move, task)
+		if rpcErr != nil {
+			return rpcErr
+		}
+		deleted, rpcErr := from.remove(move.fromPath, move.names)
 		if rpcErr != nil {
 			return rpcErr
 		}
 		if _, rpcErr := w.moveTrees(ctx, move); rpcErr != nil {
 			return rpcErr
 		}
-		err := w.publishMove(ctx, from, to, fromDesc, toDesc, task)
+		err := w.publishMove(ctx, from, to, describeDeleted(deleted), toDesc, task)
 		if errors.Is(err, ErrSQLiteBranchChanged) {
 			continue
 		}
@@ -139,22 +139,11 @@ func (w *fileWriter) publishMove(ctx context.Context, from, to *fileTree, fromDe
 }
 
 type libraryCopy struct {
-	ctx      context.Context
-	from, to *fileTree
-	task     *fileMoveTask
-	limits   FileMoveLimits
-}
-
-func (c *libraryCopy) apply(move libraryTransfer, quota *UserQuota) (string, string, *searpc.RPCError) {
-	description, rpcErr := c.insert(move, quota)
-	if rpcErr != nil {
-		return "", "", rpcErr
-	}
-	deleted, rpcErr := c.from.remove(move.fromPath, move.names)
-	if rpcErr != nil {
-		return "", "", rpcErr
-	}
-	return describeDeleted(deleted), description, nil
+	ctx                  context.Context
+	from, to             *fileTree
+	task                 *fileMoveTask
+	limits               FileMoveLimits
+	sourceKey, targetKey transferKey
 }
 
 func (c *libraryCopy) insert(transfer libraryTransfer, quota *UserQuota) (string, *searpc.RPCError) {
@@ -280,25 +269,9 @@ func (c *libraryCopy) copyEntry(entry *fsmgr.SeafDirent, name string) (*fsmgr.Se
 			return nil, copyFailure(err)
 		}
 		size = int64(file.FileSize)
-		for _, block := range file.BlkIDs {
-			if err := c.ctx.Err(); err != nil {
-				return nil, copyFailure(err)
-			}
-			if exists, err := c.to.reader.blocks.Exists(c.to.repo.StoreID, block); err == nil && exists {
-				// A previous move can leave a block in place after a failed directory sync.
-				if err := c.to.reader.blocks.Sync(c.to.repo.StoreID, block); err != nil {
-					return nil, copyFailure(err)
-				}
-				continue
-			}
-			if err := c.from.reader.blocks.Copy(c.from.repo.StoreID, c.to.repo.StoreID, block); err != nil {
-				return nil, copyFailure(err)
-			}
-		}
-		if id != fsmgr.EmptySha1 {
-			if err := c.from.reader.fs.Copy(c.from.repo.StoreID, c.to.repo.StoreID, id); err != nil {
-				return nil, copyFailure(err)
-			}
+		id, err = c.copyFile(file)
+		if err != nil {
+			return nil, copyFailure(err)
 		}
 		if c.task != nil {
 			c.task.completeFile()

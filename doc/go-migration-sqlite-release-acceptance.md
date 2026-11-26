@@ -1,6 +1,8 @@
 # Linux SQLite 发行候选验收记录
 
-本轮验证了可选择启用的 Linux SQLite 归档、原 C 版本的同数据接管和独立快照恢复。功能验收使用组合提交 `870f191a5f50bda658c540b370c716b4e88618e9`。持续负载的 C 基线仍有失败，候选待性能验收签收。 [阶段计划](go-migration-sqlite-release.md) · [组合候选](https://github.com/llwsb001/seafile-server/commit/870f191a5f50bda658c540b370c716b4e88618e9)
+最终候选的提交、双架构归档和性能签收见 [首个 Go 候选验收记录](go-migration-sqlite-first-go.md)。
+
+组合提交 `870f191a5f50bda658c540b370c716b4e88618e9` 的历史回放验证了可选择启用的 Linux SQLite 归档、原 C 版本的同数据接管和独立快照恢复。当时的 C 基线持续负载有失败，性能签收留待最终候选。 [阶段计划](go-migration-sqlite-release.md) · [组合候选](https://github.com/llwsb001/seafile-server/commit/870f191a5f50bda658c540b370c716b4e88618e9)
 
 | 产物 | SHA-256 |
 | --- | --- |

@@ -60,6 +60,13 @@ func TestManagementRPCBootstrap(t *testing.T) {
 			path := filepath.Join(root, "seafile.sock")
 			waitForRPC(t, path, enabled)
 			client := searpc.Init(path, seafserver.RPCService, 0)
+			wantTrashError := "cannot find function seafile_destroy_repo"
+			if enabled {
+				wantTrashError = "Argument should not be null"
+			}
+			if _, err := client.Call("seafile_destroy_repo"); err == nil || !strings.Contains(err.Error(), wantTrashError) {
+				t.Errorf("seafile_destroy_repo returned %v, want %q", err, wantTrashError)
+			}
 			for _, method := range []string{
 				"seafile_check_passwd", "seafile_set_passwd", "seafile_unset_passwd",
 				"seafile_is_passwd_set", "seafile_get_decrypt_key",

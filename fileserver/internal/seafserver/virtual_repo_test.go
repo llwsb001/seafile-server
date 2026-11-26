@@ -141,6 +141,78 @@ func TestCreateVirtualRepoSerializesDuplicateRequests(t *testing.T) {
 	}
 }
 
+func TestCreateEncryptedVirtualRepoUsesOriginFileKey(t *testing.T) {
+	ctx := context.Background()
+	for _, test := range []struct {
+		name    string
+		version int
+		useHash bool
+	}{
+		{"version 2 with magic", 2, false},
+		{"version 3 with magic", 3, false},
+		{"version 4 with password hash", 4, true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			passwords, db, root, _ := seedSQLitePasswordRepo(t, test.version)
+			if test.useHash {
+				args := governanceArgs(t, testVirtualOrigin, testVirtualOwner, oldSyntheticPassword, "pbkdf2_sha256", "1500")
+				if result, rpcErr := passwords.upgradeRepoPasswordHash(ctx, db, args); rpcErr != nil || result != 0 {
+					t.Fatalf("prepare password hash: %v, %v", result, rpcErr)
+				}
+			}
+			reader := NewReader(db, root)
+			create := reader.RepoCreationRPCHandlers(db)["create_virtual_repo"]
+			args := virtualTestArgs("/team")
+			for _, test := range []struct {
+				password, message string
+				code              int
+			}{
+				{"", "Password is not set", errBadArgs},
+				{newSyntheticPassword, "Incorrect password", errGeneral},
+			} {
+				args[5], _ = json.Marshal(test.password)
+				if result, rpcErr := create(ctx, args); result != nil || rpcErr == nil || rpcErr.Code != test.code || rpcErr.Message != test.message {
+					t.Fatalf("unexpected rejected creation: %v, %+v", result, rpcErr)
+				}
+			}
+			if got := virtualTestState(t, db); got != [6]int{1, 1, 1, 1, 1, 0} {
+				t.Fatalf("rejected creation published records: %v", got)
+			}
+			args[5], _ = json.Marshal(oldSyntheticPassword)
+			result, rpcErr := create(ctx, args)
+			id, ok := result.(string)
+			if rpcErr != nil || !ok || !validRepoID(id) {
+				t.Fatalf("create encrypted virtual repo: %v, %v", result, rpcErr)
+			}
+			if repeat, rpcErr := create(ctx, args); repeat != id || rpcErr != nil {
+				t.Fatalf("duplicate creation: %v, %v", repeat, rpcErr)
+			}
+			origin, err := reader.Repo(ctx, testVirtualOrigin)
+			if err != nil {
+				t.Fatal(err)
+			}
+			view, err := reader.Repo(ctx, id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if view.VirtualInfo == nil || view.VirtualInfo.Path != "/team" || view.VirtualInfo.BaseCommitID != origin.HeadCommitID ||
+				view.StoreID != origin.ID || !view.IsEncrypted || view.EncVersion != origin.EncVersion ||
+				view.RandomKey != origin.RandomKey || view.Salt != origin.Salt || view.PwdHashAlgo != origin.PwdHashAlgo ||
+				view.PwdHashParams != origin.PwdHashParams || view.HasPwdHashParams != origin.HasPwdHashParams {
+				t.Fatal("virtual repo metadata does not match its origin and projection")
+			}
+			if view.Magic == origin.Magic && view.PwdHash == origin.PwdHash {
+				t.Fatal("virtual repo reused its origin's ID-bound password verifier")
+			}
+			originKey, originIV, originOK := unlockRepo(origin, oldSyntheticPassword)
+			viewKey, viewIV, viewOK := unlockRepo(view, oldSyntheticPassword)
+			if !originOK || !viewOK || !bytes.Equal(originKey, viewKey) || !bytes.Equal(originIV, viewIV) {
+				t.Fatal("origin and virtual repo did not unlock to the same file key")
+			}
+		})
+	}
+}
+
 func TestCreateVirtualRepoRollsBackFailures(t *testing.T) {
 	ctx := context.Background()
 	for _, failure := range []string{"object-write", "mapping-insert", "db-commit"} {

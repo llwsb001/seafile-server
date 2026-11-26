@@ -47,6 +47,10 @@ seaf_db_new_sqlite (const char *db_path, int max_connections);
 int
 seaf_db_type (SeafDB *db);
 
+/* Return the number of changed rows, or -1 on failure, for a SQLite write. */
+int
+seaf_db_sqlite_statement_query_changes (SeafDB *db, const char *sql, int n, ...);
+
 int
 seaf_db_query (SeafDB *db, const char *sql);
 

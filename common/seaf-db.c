@@ -1276,6 +1276,8 @@ mysql_db_row_get_column_int64 (SeafDBRow *vrow, int idx)
 
 /* SQLite DB */
 
+#define SQLITE_BUSY_TIMEOUT_MS 2000
+
 /* SQLite thread synchronization rountines.
  * See https://www.sqlite.org/unlock_notify.html
  */
@@ -1395,6 +1397,15 @@ sqlite_db_get_connection (SeafDB *vdb)
         return NULL;
     }
 
+    /* unlock_notify handles shared-cache locks. Also wait for file locks
+     * held by other SQLite processes. */
+    result = sqlite3_busy_timeout (db_conn, SQLITE_BUSY_TIMEOUT_MS);
+    if (result != SQLITE_OK) {
+        seaf_warning ("Failed to set sqlite busy timeout: %s\n", sqlite3_errmsg (db_conn));
+        sqlite3_close (db_conn);
+        return NULL;
+    }
+
     conn = g_new0 (SQLiteDBConnection, 1);
     conn->db_conn = db_conn;
 
@@ -1468,7 +1479,8 @@ _bind_parameters_sqlite (sqlite3 *db, sqlite3_stmt *stmt, int n, va_list args)
 }
 
 static int
-sqlite_db_execute_sql (DBConnection *vconn, const char *sql, int n, va_list args, gboolean *retry)
+sqlite_db_execute_statement (DBConnection *vconn, const char *sql, int n, va_list args,
+                             int *changes)
 {
     SQLiteDBConnection *conn = (SQLiteDBConnection *)vconn;
     sqlite3 *db = conn->db_conn;
@@ -1494,10 +1506,34 @@ sqlite_db_execute_sql (DBConnection *vconn, const char *sql, int n, va_list args
         ret = -1;
         goto out;
     }
+    if (changes)
+        *changes = sqlite3_changes (db);
 
 out:
     sqlite3_finalize (stmt);
     return ret;
+}
+
+static int
+sqlite_db_execute_sql (DBConnection *vconn, const char *sql, int n, va_list args, gboolean *retry)
+{
+    return sqlite_db_execute_statement (vconn, sql, n, args, NULL);
+}
+
+int
+seaf_db_sqlite_statement_query_changes (SeafDB *db, const char *sql, int n, ...)
+{
+    DBConnection *conn = sqlite_db_get_connection (db);
+    if (!conn)
+        return -1;
+
+    int changes = 0;
+    va_list args;
+    va_start (args, n);
+    int ret = sqlite_db_execute_statement (conn, sql, n, args, &changes);
+    va_end (args);
+    sqlite_db_release_connection (conn, ret < 0);
+    return ret < 0 ? -1 : changes;
 }
 
 typedef struct SQLiteDBRow {

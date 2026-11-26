@@ -25,7 +25,7 @@ func TestCrossLibraryMovePublishesBothHeadsOrNeither(t *testing.T) {
 	target := create("target", otherOwner)
 	readOnly := create("read-only", otherOwner)
 	config := NewServerConfig(db, nil)
-	handlers, stop := reader.FileWriteRPCHandlers(ctx, db, nil, false, NewUserQuota(db, config), FileMoveLimits{})
+	handlers, stop := reader.FileWriteRPCHandlers(ctx, db, nil, false, NewUserQuota(db, config), NewRepoPasswords(reader), FileMoveLimits{})
 	defer stop()
 	if _, rpcErr := handlers["seafile_post_empty_file"](ctx, fileWriteRPCArgs(t, source, "/", "transfer.txt", owner)); rpcErr != nil {
 		t.Fatal(rpcErr)

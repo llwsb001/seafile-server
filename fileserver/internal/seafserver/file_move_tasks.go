@@ -2,6 +2,7 @@ package seafserver
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"sync"
 	"time"
@@ -9,6 +10,30 @@ import (
 	"github.com/google/uuid"
 	"github.com/haiwen/seafile-server/fileserver/searpc"
 )
+
+func (w *fileWriter) publishTransfer(ctx context.Context, task *fileMoveTask, write func(*sql.Conn) (bool, error)) error {
+	locked := false
+	defer func() {
+		if locked {
+			task.mu.Unlock()
+		}
+	}()
+	_, err := withSQLiteWrite(ctx, w.db, func(conn *sql.Conn) (bool, error) {
+		// Once SQLite grants the write lock, serialize cancellation with publication.
+		if task != nil {
+			task.mu.Lock()
+			locked = true
+		}
+		if err := ctx.Err(); err != nil {
+			return false, err
+		}
+		return write(conn)
+	})
+	if err == nil && locked {
+		task.finished = true
+	}
+	return err
+}
 
 const fileMoveWorkers = 5
 
@@ -40,7 +65,7 @@ func (q *fileMoveQueue) close() {
 	q.jobs.Wait()
 }
 
-func (q *fileMoveQueue) submit(report bool, move func(context.Context, *fileMoveTask) *searpc.RPCError) (any, *searpc.RPCError) {
+func (q *fileMoveQueue) submit(report bool, run func(context.Context, *fileMoveTask) *searpc.RPCError) (any, *searpc.RPCError) {
 	ctx, stop := context.WithCancel(q.ctx)
 	var id string
 	var taskID any
@@ -49,7 +74,7 @@ func (q *fileMoveQueue) submit(report bool, move func(context.Context, *fileMove
 		identifier, err := uuid.NewRandom()
 		if err != nil {
 			stop()
-			return nil, fileWriteFailure("generate file move ID", err)
+			return nil, fileWriteFailure("generate copy or move task ID", err)
 		}
 		id = identifier.String()
 		taskID = id
@@ -70,7 +95,7 @@ func (q *fileMoveQueue) submit(report bool, move func(context.Context, *fileMove
 		case <-ctx.Done():
 			return
 		}
-		failure := move(ctx, task)
+		failure := run(ctx, task)
 		task.finish(failure)
 	}()
 	return map[string]any{"background": true, "task-id": taskID}, nil

@@ -38,15 +38,20 @@ func (s *Store) CollectGCBlocks(ctx context.Context, opts GCOptions, output io.W
 		if err := ctx.Err(); err != nil {
 			return errors.Join(append(failed, err)...)
 		}
-		if err := s.collectGCStore(ctx, db, root, id, now, output); err != nil {
+		if err := s.collectGCStore(ctx, db, root, id, now, opts.RemoveFS, output); err != nil {
 			failed = append(failed, fmt.Errorf("GC for %s: %w", id, err))
+		}
+	}
+	if opts.Prefix != nil || len(opts.RepoIDs) == 0 {
+		if err := s.collectDeletedStores(ctx, db, root, output); err != nil {
+			failed = append(failed, err)
 		}
 	}
 	fmt.Fprintln(output, "=== GC is finished ===")
 	return errors.Join(failed...)
 }
 
-func (s *Store) collectGCStore(ctx context.Context, db *sql.DB, root, id string, now time.Time, output io.Writer) error {
+func (s *Store) collectGCStore(ctx context.Context, db *sql.DB, root, id string, now time.Time, includeFS bool, output io.Writer) error {
 	repo, err := s.Repo(ctx, id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
@@ -58,7 +63,7 @@ func (s *Store) collectGCStore(ctx context.Context, db *sql.DB, root, id string,
 	if err != nil {
 		return err
 	}
-	plan, err := s.planGC(ctx, repo, now)
+	plan, err := s.planGC(ctx, repo, now, includeFS)
 	if err != nil {
 		return err
 	}
@@ -67,18 +72,23 @@ func (s *Store) collectGCStore(ctx context.Context, db *sql.DB, root, id string,
 		return nil
 	}
 	fmt.Fprintf(output, "Scanning and deleting unused blocks for repo %.8s.\n", id)
-	removed, err := applyBlockPlan(ctx, db, plan, references, func(blockID string) error {
-		return removeGCBlock(root, repo.StoreID, blockID)
+	removed, err := applyGCPlan(ctx, db, plan, references, func(kind, objectID string) error {
+		return removeGCObject(root, kind, repo.StoreID, objectID)
 	})
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(output, "GC finished for repo %.8s. %d blocks total, about %d reachable blocks, %d blocks are removed.\n",
+	fmt.Fprintf(output, "GC finished for repo %.8s. %d blocks total, about %d reachable blocks, %d blocks are removed.",
 		id, plan.blockCount, len(plan.reachable.blocks), removed)
+	if includeFS {
+		fmt.Fprintf(output, " %d fs total, about %d reachable fs, %d fs are removed.",
+			plan.fsCount, len(plan.reachable.fs), len(plan.unusedFS))
+	}
+	fmt.Fprintln(output)
 	return nil
 }
 
-func applyBlockPlan(ctx context.Context, db *sql.DB, plan gcPlan, before []string, remove func(string) error) (int, error) {
+func applyGCPlan(ctx context.Context, db *sql.DB, plan gcPlan, before []string, remove func(string, string) error) (int, error) {
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, err
@@ -103,11 +113,20 @@ func applyBlockPlan(ctx context.Context, db *sql.DB, plan gcPlan, before []strin
 		return 0, fmt.Errorf("commit history boundaries: %w", err)
 	}
 
+	// Sweep FS first. If it fails, the remaining blocks keep the store eligible for a retry.
+	for _, id := range plan.unusedFS {
+		if err := ctx.Err(); err != nil {
+			return 0, err
+		}
+		if err := remove("fs", id); err != nil {
+			return 0, fmt.Errorf("remove FS object %s: %w", id, err)
+		}
+	}
 	for index, block := range plan.unused {
 		if err := ctx.Err(); err != nil {
 			return index, err
 		}
-		if err := remove(block); err != nil {
+		if err := remove("blocks", block); err != nil {
 			return index, fmt.Errorf("remove block %s: %w", block, err)
 		}
 	}
@@ -147,8 +166,8 @@ func gcReferences(ctx context.Context, db queryRows, origin string) ([]string, e
 	return references, rows.Err()
 }
 
-func removeGCBlock(root, storeID, id string) error {
-	directory := filepath.Join(root, "storage", "blocks", storeID, id[:2])
+func removeGCObject(root, kind, storeID, id string) error {
+	directory := filepath.Join(root, "storage", kind, storeID, id[:2])
 	resolved, err := filepath.EvalSymlinks(directory)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil

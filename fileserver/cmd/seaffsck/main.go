@@ -20,6 +20,7 @@ import (
 type options struct {
 	maintenance.CheckOptions
 	dataDir, configDir, ccnetDir string
+	exportTo                     *string
 	force, help, version         bool
 }
 
@@ -56,6 +57,13 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
+	}
+	if opts.exportTo != nil {
+		if err := maintenance.Export(ctx, opts.dataDir, opts.configDir, *opts.exportTo, opts.RepoIDs, stdout); err != nil {
+			fmt.Fprintf(stdout, "Failed to create seafile session: %v\n", err)
+			return 1
+		}
+		return 0
 	}
 	if runtime.GOOS == "linux" && !opts.force {
 		info, err := os.Stat(opts.dataDir)
@@ -97,10 +105,11 @@ func expandHome(path string) (string, error) {
 }
 
 func usage(w io.Writer) {
-	fmt.Fprint(w, `usage: seaf-fsck [-F central-config-dir] [-d seafile_dir] [repo_id_1 [repo_id_2 ...]]
+	fmt.Fprint(w, `usage: seaf-fsck [-E exported_path] [-F central-config-dir] [-d seafile_dir] [repo_id_1 [repo_id_2 ...]]
 Additional options:
 -f, --force: run fsck without user ownership check
 -t, --threads: thread number for fsck
+-E, --export: export libraries to the specified path
 -S, --check-file-size: compare directory entry and file object sizes
 -s, --shallow: check block existence without hashing block contents
 -i, --id-prefix: run fsck for repos with this repo id prefix
@@ -126,7 +135,7 @@ func parse(args []string) (options, error) {
 			return result, fmt.Errorf("unrecognized option %q", arg)
 		}
 		for i, name := range names {
-			requiresValue := strings.Contains("cdFit", name)
+			requiresValue := strings.Contains("cdEFit", name)
 			if hasValue && !requiresValue {
 				return result, fmt.Errorf("option %q does not take an argument", arg)
 			}
@@ -143,7 +152,7 @@ func parse(args []string) (options, error) {
 				result.Shallow = true
 			case "S":
 				result.CheckFileSize = true
-			case "c", "d", "F", "i", "t":
+			case "c", "d", "E", "F", "i", "t":
 				if !hasValue {
 					switch {
 					case i+1 < len(names):
@@ -174,7 +183,7 @@ func splitOption(arg string) (names []string, value string, hasValue bool) {
 	for _, option := range []struct{ long, short string }{
 		{"help", "h"}, {"version", "v"}, {"force", "f"}, {"threads", "t"},
 		{"config-file", "c"}, {"central-config-dir", "F"}, {"seafdir", "d"},
-		{"shallow", "s"}, {"check-file-size", "S"}, {"id-prefix", "i"},
+		{"shallow", "s"}, {"check-file-size", "S"}, {"id-prefix", "i"}, {"export", "E"},
 	} {
 		if option.long == long {
 			return []string{option.short}, value, hasValue
@@ -189,6 +198,8 @@ func setValue(opts *options, name, value string) {
 		opts.ccnetDir = value
 	case "d":
 		opts.dataDir = value
+	case "E":
+		opts.exportTo = &value
 	case "F":
 		opts.configDir = value
 	case "i":

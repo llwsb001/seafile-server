@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/python3
 """Linux SQLite release entry points for a versioned Seafile installation."""
 
 import argparse
@@ -260,6 +260,8 @@ def main() -> int:
         with (release.pids / ".sqlite-release-operation.lock").open("a") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
             if args.action == "restart":
+                if active_process(release.pids / "seahub.pid"):
+                    raise RuntimeError("stop Seahub before restarting the SQLite release")
                 check_config(release)
             if args.action in ("stop", "restart"):
                 stop(release)

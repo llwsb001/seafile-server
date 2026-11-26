@@ -1,8 +1,10 @@
 # Linux SQLite 启停与回退
 
-使用 Linux 服务账号直接运行发行包的 `seafile/bin/seafile-sqlite`。入口使用支持 Linux pidfd 的系统 Python 3.10 或更高版本。版本目录直接位于实例根目录下。同一实例的 `conf`、`ccnet`、`seafile-data`、`logs` 和 `pids` 由各版本共享。
+使用 Linux 服务账号直接运行发行包的 `seafile/bin/seafile-sqlite`。入口使用支持 Linux pidfd 的系统 `/usr/bin/python3`（Python 3.10 或更高版本）。SeafDAV 仍可通过 `PATH` 选择自己的 Python。版本目录直接位于实例根目录下。同一实例的 `conf`、`ccnet`、`seafile-data`、`logs` 和 `pids` 由各版本共享。
 
 在实例的 `conf/seafile.conf` 设置 `[database] type = sqlite` 和 `[fileserver] use_go_fileserver = true`。使用正常部署方式为该进程提供 `JWT_PRIVATE_KEY`。各命令中的 `GO_VERSION` 和 `C_VERSION` 指向实例下各自的版本目录。
+
+执行 `restart` 前先停止 Seahub。若 Seahub 仍在运行，入口会报错，保留当前核心和文件服务进程。
 
 ```sh
 SERVICE="$GO_VERSION/seafile/bin/seafile-sqlite"

@@ -4,7 +4,25 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 )
+
+func TestRepoRevertTimeWithFixedPOSIXOffset(t *testing.T) {
+	for _, test := range []struct {
+		tz, want string
+	}{
+		{"UTC-8", "1970-01-01 08:00:00"},
+		{"GMT+05:30:15", "1969-12-31 18:29:45"},
+		{"UTC+0", "1970-01-01 00:00:00"},
+	} {
+		t.Run(test.tz, func(t *testing.T) {
+			t.Setenv("TZ", test.tz)
+			if got := repoRevertTime(0).Format(time.DateTime); got != test.want {
+				t.Fatalf("rollback timestamp = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
 
 func TestRepoRevertPreservesConcurrentPublicationAndRequiresWriteAccess(t *testing.T) {
 	ctx := context.Background()

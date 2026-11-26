@@ -4,11 +4,36 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
+	"regexp"
+	"strconv"
 	"time"
 
 	"github.com/haiwen/seafile-server/fileserver/searpc"
 	"github.com/haiwen/seafile-server/fileserver/utils"
 )
+
+var fixedPOSIXTZ = regexp.MustCompile(`^([A-Za-z]{3,})([+-]?)([0-9]{1,2})(:([0-9]{2})(:([0-9]{2}))?)?$`)
+
+func repoRevertTime(ctime int64) time.Time {
+	timestamp := time.Unix(ctime, 0)
+	parts := fixedPOSIXTZ.FindStringSubmatch(os.Getenv("TZ"))
+	if parts == nil {
+		return timestamp
+	}
+	hour, _ := strconv.Atoi(parts[3])
+	minute, _ := strconv.Atoi(parts[5])
+	second, _ := strconv.Atoi(parts[7])
+	if hour > 24 || minute > 59 || second > 59 {
+		return timestamp
+	}
+	offset := hour*3600 + minute*60 + second
+	// A POSIX offset is added to local time to get UTC.
+	if parts[2] != "-" {
+		offset = -offset
+	}
+	return timestamp.In(time.FixedZone(parts[1], offset))
+}
 
 func (w *fileWriter) revertRepo(ctx context.Context, args []json.RawMessage) (any, *searpc.RPCError) {
 	id, target, user := stringArgument(args, 0), stringArgument(args, 1), stringArgument(args, 2)
@@ -34,7 +59,7 @@ func (w *fileWriter) revertRepo(ctx context.Context, args []json.RawMessage) (an
 			return -1, rpcError(errGeneral, "Commit doesn't exist")
 		}
 		tree.root = commit.RootID
-		description := "Reverted repo to status at " + time.Unix(commit.Ctime, 0).Local().Format(time.DateTime) + "."
+		description := "Reverted repo to status at " + repoRevertTime(commit.Ctime).Format(time.DateTime) + "."
 		if err := w.publish(ctx, tree, description); errors.Is(err, ErrSQLiteBranchChanged) {
 			continue
 		} else if err != nil {

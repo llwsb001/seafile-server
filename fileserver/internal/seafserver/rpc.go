@@ -64,6 +64,9 @@ func (r *Reader) RPCHandlers(config *ServerConfig) map[string]searpc.Handler {
 		"seafile_get_file_id_by_commit_and_path": r.fileIDByCommitAndPath,
 		"seafile_get_dir_id_by_commit_and_path":  r.dirIDByCommitAndPath,
 
+		"search_files":         r.searchFiles(false),
+		"search_files_by_path": r.searchFiles(true),
+
 		"seafile_list_share_repos":          r.listShareRepos,
 		"seafile_list_repo_shared_to":       r.listRepoSharedTo,
 		"get_shared_users_by_repo":          r.sharedUsersByRepo,

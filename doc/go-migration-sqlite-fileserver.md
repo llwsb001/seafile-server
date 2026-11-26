@@ -93,6 +93,8 @@ go -C fileserver build -o "$SEAFILE_CONTROLLER_BIN" ./cmd/seafilecontroller
 
 `seafdav.conf` 的 `[WEBDAV] enabled = true` 启动 Python SeafDAV，并传递配置路径、端口、日志及 RPC socket。兼容仓库用 `test-fileserver-controller` 在同一数据上验证 C 回退、Go 恢复、PID 清理和日志轮转。`SEAFILE_CONTROLLER_DAV=1` 追加真实 SeafDAV HTTP 与重启检查。 [SeafDAV 启动入口](https://github.com/haiwen/seafdav/blob/1d29df54f8479de960500b1518fafae91c647c4b/wsgidav/server/server_cli.py)
 
+启用 Go 时，controller 的 `-t` 使用同目录的 `seaf-server-go -t` 和 `fileserver -t`，检查配置、SQLite 库及文件服务所需的 `JWT_PRIVATE_KEY`。检查完成即退出，跳过 RPC 和 HTTP 监听以及 PID 文件创建。切回 C 配置后，`-t` 继续调用 C `seaf-server -t`。
+
 ### 对拍与接管
 
 1. **跑现有回归。** 在 Linux 按阶段 4 报告准备锁定的 C 二进制、`pysearpc` 和 v1 归档，保留 v1–v5 的验收入口。v6 用 `test-repo-create` 跑全部库写入场景。服务端现有 [上传与更新](../tests/test_file_operation/test_upload_and_update.py)、[下载响应头](../tests/test_file_operation/test_download_headers.py)、[ZIP](../tests/test_file_operation/test_zip_download.py)、[虚拟库合并](../tests/test_file_operation/test_merge_virtual_repo.py) 和 [大文件](../tests/test_file_operation/test_upload_large_files.py) 测试作为 v7 场景来源。 [现有验收命令](go-migration-sqlite-stage4-acceptance.md#复现命令)

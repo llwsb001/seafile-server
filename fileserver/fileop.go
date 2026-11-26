@@ -2098,8 +2098,12 @@ func genCommitNeedRetry(repo *repomgr.Repo, base *commitmgr.Commit, commit *comm
 		return false, err
 	}
 
-	repeated := repomgr.UsesSQLite() && commit.CommitID == currentHead.CommitID
-	if base.CommitID != currentHead.CommitID && !repeated {
+	sqlite := repomgr.UsesSQLite()
+	repeated := sqlite && (commit.CommitID == currentHead.CommitID ||
+		(currentHead.Desc == sqliteCredentialMergeMessage && currentHead.SecondParentID.ValueOrZero() == commit.CommitID))
+	if repeated {
+		mergedCommit = currentHead
+	} else if base.CommitID != currentHead.CommitID {
 		if !handleConncurrentUpdate {
 			return false, ErrConflict
 		}
@@ -2136,6 +2140,14 @@ func genCommitNeedRetry(repo *repomgr.Repo, base *commitmgr.Commit, commit *comm
 			err := fmt.Errorf("failed to add commit: %v", err)
 			return false, err
 		}
+	} else if sqlite && currentHead.Encrypted == "true" && !sameCommitEncryption(currentHead, commit) {
+		// Older clients can upload the current tree with the previous password
+		// wrapper. Accept their content and retain the server's credentials.
+		mergedCommit, err = mergeSQLiteCredentialCommit(repo, currentHead, commit, user)
+		if err != nil {
+			return false, err
+		}
+		secondParentID = commit.CommitID
 	} else {
 		mergedCommit = commit
 	}

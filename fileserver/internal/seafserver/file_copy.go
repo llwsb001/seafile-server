@@ -29,16 +29,18 @@ func (w *fileWriter) copyFiles(ctx context.Context, args []json.RawMessage) (any
 	if rpcErr != nil {
 		return nil, rpcErr
 	}
-	if transfer.fromRepo != transfer.toRepo && intArgument(args, 8) == 0 {
-		if _, _, rpcErr := w.copyTrees(ctx, transfer); rpcErr != nil {
-			return nil, rpcErr
-		}
+	from, to, rpcErr := w.copyTrees(ctx, transfer)
+	if rpcErr != nil {
+		return nil, rpcErr
+	}
+	direct := linkedTransfer(from, to)
+	if !direct && intArgument(args, 8) == 0 {
 		return w.moves.submit(intArgument(args, 7) != 0, func(ctx context.Context, task *fileMoveTask) *searpc.RPCError {
 			return w.runCopy(ctx, transfer, task)
 		})
 	}
 	if rpcErr := w.runCopy(ctx, transfer, nil); rpcErr != nil {
-		if transfer.fromRepo != transfer.toRepo && rpcErr.Code == errGeneral {
+		if !direct && rpcErr.Code == errGeneral {
 			return nil, rpcError(errGeneral, "Failed to copy")
 		}
 		return nil, rpcErr
@@ -47,7 +49,7 @@ func (w *fileWriter) copyFiles(ctx context.Context, args []json.RawMessage) (any
 }
 
 func (w *fileWriter) copyTrees(ctx context.Context, transfer libraryTransfer) (*fileTree, *fileTree, *searpc.RPCError) {
-	to, rpcErr := w.writableTree(ctx, transfer.toRepo, transfer.user, false)
+	to, rpcErr := w.writableTree(ctx, transfer.toRepo, transfer.user, true)
 	if rpcErr != nil {
 		return nil, nil, rpcErr
 	}
@@ -59,8 +61,8 @@ func (w *fileWriter) copyTrees(ctx context.Context, transfer libraryTransfer) (*
 	if err != nil {
 		return nil, nil, rpcError(errBadArgs, "Invalid repo")
 	}
-	if repo.IsCorrupted || repo.Version != 1 || repo.VirtualInfo != nil {
-		return nil, nil, rpcError(errBadArgs, "File RPC requires an ordinary version 1 library")
+	if repo.IsCorrupted || repo.Version != 1 {
+		return nil, nil, rpcError(errBadArgs, "File RPC requires a version 1 library")
 	}
 	permission, err := w.permissions.check(ctx, repo.ID, transfer.user)
 	if err != nil {
@@ -80,8 +82,8 @@ func (w *fileWriter) runCopy(ctx context.Context, transfer libraryTransfer, task
 			return rpcErr
 		}
 		var description string
-		if from == to {
-			description, rpcErr = copyWithinLibrary(to, transfer)
+		if linkedTransfer(from, to) {
+			description, rpcErr = insertLinkedTransfer(from, to, transfer, "copy")
 		} else {
 			description, rpcErr = w.copyAcrossLibraries(ctx, from, to, transfer, task)
 		}
@@ -133,26 +135,39 @@ func (w *fileWriter) publishCopy(ctx context.Context, from, to *fileTree, desc s
 	})
 }
 
-func copyWithinLibrary(tree *fileTree, transfer libraryTransfer) (string, *searpc.RPCError) {
-	dir, rpcErr := tree.reader.directoryByPath(tree.repo, tree.root, strings.Join(transfer.fromPath, "/"))
+func linkedTransfer(from, to *fileTree) bool {
+	return from.repo.ID == to.repo.ID ||
+		from.repo.VirtualInfo != nil && from.repo.VirtualInfo.OriginRepoID == to.repo.ID ||
+		to.repo.VirtualInfo != nil && to.repo.VirtualInfo.OriginRepoID == from.repo.ID
+}
+
+func originPath(tree *fileTree, path []string) []string {
+	if virtual := tree.repo.VirtualInfo; virtual != nil {
+		base := strings.FieldsFunc(virtual.Path, func(r rune) bool { return r == '/' })
+		return append(base, path...)
+	}
+	return path
+}
+
+func insertLinkedTransfer(from, to *fileTree, transfer libraryTransfer, action string) (string, *searpc.RPCError) {
+	dir, rpcErr := from.reader.directoryByPath(from.repo, from.root, strings.Join(transfer.fromPath, "/"))
 	if rpcErr != nil {
 		return "", rpcErr
 	}
+	source, target := originPath(from, transfer.fromPath), originPath(to, transfer.toPath)
 	entries := make([]*fsmgr.SeafDirent, 0, len(transfer.names))
 	for i, name := range transfer.names {
-		if len(transfer.toPath) > len(transfer.fromPath) &&
-			slices.Equal(transfer.toPath[:len(transfer.fromPath)], transfer.fromPath) &&
-			transfer.toPath[len(transfer.fromPath)] == name {
-			return "", rpcError(errGeneral, "Can not copy directory to its subdirectory")
+		if len(target) > len(source) && slices.Equal(target[:len(source)], source) && target[len(source)] == name {
+			return "", rpcError(errGeneral, "Can not "+action+" directory to its subdirectory")
 		}
 		index := findEntry(dir.Entries, name)
 		if index == -1 {
 			return "", rpcError(errBadArgs, fmt.Sprintf("File %s does not exist", name))
 		}
 		entry := dir.Entries[index]
-		entries = append(entries, fsmgr.NewDirent(entry.ID, transfer.targets[i], entry.Mode, entry.Mtime, tree.user, entry.Size))
+		entries = append(entries, fsmgr.NewDirent(entry.ID, transfer.targets[i], entry.Mode, entry.Mtime, to.user, entry.Size))
 	}
-	if rpcErr := tree.insertMoved(transfer.toPath, entries, false); rpcErr != nil {
+	if rpcErr := to.insertMoved(transfer.toPath, entries, transfer.replace); rpcErr != nil {
 		return "", rpcError(errGeneral, "Failed to cp file")
 	}
 	return describeTransferTarget(transfer.targets, entries[0].Mode), nil

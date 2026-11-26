@@ -156,12 +156,7 @@ func (e *repoExport) repo(ctx context.Context, id, destination string) {
 		e.log("Find available commit %.8s(created at %s), will export files from it.", commit.CommitID, stamp)
 	}
 	e.log("Start to export files for repo %.8s(%s).", id, commit.RepoName)
-	creator := strings.Map(func(ch rune) rune {
-		if ch >= 'A' && ch <= 'Z' {
-			return ch + 'a' - 'A'
-		}
-		return ch
-	}, commit.CreatorName)
+	creator := asciiLower(commit.CreatorName)
 	if creator == "" {
 		creator = "(null)"
 	}
@@ -179,6 +174,15 @@ func (e *repoExport) repo(ctx context.Context, id, destination string) {
 	if ctx.Err() == nil {
 		e.log("Finish exporting files for repo %.8s.\n", id)
 	}
+}
+
+func asciiLower(input string) string {
+	return strings.Map(func(ch rune) rune {
+		if ch >= 'A' && ch <= 'Z' {
+			return ch + 'a' - 'A'
+		}
+		return ch
+	}, input)
 }
 
 func (e *repoExport) availableCommit(repo Repo) (*commitmgr.Commit, *fsmgr.SeafDir) {

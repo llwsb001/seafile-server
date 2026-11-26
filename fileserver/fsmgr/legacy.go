@@ -1,6 +1,7 @@
 package fsmgr
 
 import (
+	"bytes"
 	"crypto/sha1"
 	"encoding/binary"
 	"encoding/hex"
@@ -77,16 +78,34 @@ func decodeLegacyDir(id string, data []byte) (*SeafDir, error) {
 }
 
 func verifyLegacyDirID(dir *SeafDir) error {
+	if legacyDirID(dir.Entries) != dir.DirID {
+		return fmt.Errorf("object ID %s does not match its contents", dir.DirID)
+	}
+	return nil
+}
+
+func legacyDirID(entries []*SeafDirent) string {
 	hash := sha1.New()
 	var mode [4]byte
-	for _, entry := range dir.Entries {
+	for _, entry := range entries {
 		hash.Write([]byte(entry.ID))
 		hash.Write([]byte(entry.Name))
 		binary.LittleEndian.PutUint32(mode[:], entry.Mode)
 		hash.Write(mode[:])
 	}
-	if hex.EncodeToString(hash.Sum(nil)) != dir.DirID {
-		return fmt.Errorf("object ID %s does not match its contents", dir.DirID)
+	return hex.EncodeToString(hash.Sum(nil))
+}
+
+func encodeLegacyDir(entries []*SeafDirent, out *bytes.Buffer) {
+	var value [4]byte
+	binary.BigEndian.PutUint32(value[:], SeafMetadataTypeDir)
+	out.Write(value[:])
+	for _, entry := range entries {
+		binary.BigEndian.PutUint32(value[:], entry.Mode)
+		out.Write(value[:])
+		out.WriteString(entry.ID)
+		binary.BigEndian.PutUint32(value[:], uint32(len(entry.Name)))
+		out.Write(value[:])
+		out.WriteString(entry.Name)
 	}
-	return nil
 }

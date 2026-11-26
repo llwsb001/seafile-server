@@ -30,6 +30,7 @@ type Store struct {
 	db          *sql.DB
 	snapshotDir string
 	defaultDays int
+	write       bool
 }
 
 type objectStores struct {
@@ -50,6 +51,15 @@ func openObjectStores(dataDir string) *objectStores {
 
 // Open opens a stopped local SQLite installation for maintenance.
 func Open(ctx context.Context, dataDir, configDir string) (*Store, error) {
+	return openSQLiteMaintenance(ctx, dataDir, configDir, false)
+}
+
+// OpenForRepair opens a stopped SQLite installation for explicit repair.
+func OpenForRepair(ctx context.Context, dataDir, configDir string) (*Store, error) {
+	return openSQLiteMaintenance(ctx, dataDir, configDir, true)
+}
+
+func openSQLiteMaintenance(ctx context.Context, dataDir, configDir string, write bool) (*Store, error) {
 	conf, err := loadMaintenanceConfig(dataDir, configDir)
 	if err != nil {
 		return nil, err
@@ -58,7 +68,14 @@ func Open(ctx context.Context, dataDir, configDir string) (*Store, error) {
 	if !strings.EqualFold(conf.Section("database").Key("type").String(), "sqlite") {
 		return nil, errors.New("maintenance requires database type sqlite")
 	}
-	db, snapshotDir, err := openSQLiteSnapshot(ctx, filepath.Join(dataDir, "seafile.db"))
+	path := filepath.Join(dataDir, "seafile.db")
+	var db *sql.DB
+	var snapshotDir string
+	if write {
+		db, err = openRepairDB(ctx, path)
+	} else {
+		db, snapshotDir, err = openSQLiteSnapshot(ctx, path)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -67,6 +84,7 @@ func Open(ctx context.Context, dataDir, configDir string) (*Store, error) {
 		db:           db,
 		snapshotDir:  snapshotDir,
 		defaultDays:  conf.Section("history").Key("keep_days").MustInt(-1),
+		write:        write,
 	}, nil
 }
 

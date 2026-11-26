@@ -28,6 +28,17 @@ SERVICE="$GO_VERSION/seafile/bin/seafile-sqlite"
 "$SERVICE" --version-dir "$GO_VERSION" gc -- -D "$REPO_ID"
 ```
 
+### Seahub 暂存文件导入
+
+使用 SeaDoc 导入等暂存功能时，Seahub 与 Go 核心使用同一服务账号。新安装初始化会创建实例根目录下的 `staged-import`。已有实例可用该账号创建同名目录并将权限设为 `0700`。启动 Seahub 前在其环境中设置 `TMPDIR`，使 Python 暂存文件落在这个目录。
+
+```sh
+install -d -m 0700 "$INSTANCE/staged-import"
+export TMPDIR="$INSTANCE/staged-import"
+```
+
+核心在私有 RPC 上读取服务账号所有的普通文件。目录和中间子目录需由同一账号所有，且只对该账号开放。暂存文件需有单一目录项，且只允许所有者写入。调用方写完并关闭文件后再提交绝对路径，RPC 返回后由调用方清理。导入要求调用方在目标库有写权限，实例快照不保存这个暂存目录。
+
 ### 用原 C 版本接管
 
 1. 停止写入入口，确认 Go 的持久队列已排空，统计已追上最新 head。用 Go 版本所在路径执行 `stop`。

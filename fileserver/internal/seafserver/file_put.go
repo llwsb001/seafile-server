@@ -70,7 +70,7 @@ func (w *fileWriter) putFile(ctx context.Context, args []json.RawMessage) (any, 
 			return false, rpcError(519, "Quota is full")
 		}
 		var rpcErr *searpc.RPCError
-		fileID, rpcErr = w.indexPutFile(ctx, tree, input, info.Size())
+		fileID, rpcErr = w.indexLocalFile(ctx, tree, input, info.Size())
 		if rpcErr != nil || fileID == entry.ID {
 			return false, rpcErr
 		}
@@ -96,7 +96,7 @@ func (w *fileWriter) putFile(ctx context.Context, args []json.RawMessage) (any, 
 	return fileID, nil
 }
 
-func (w *fileWriter) indexPutFile(ctx context.Context, tree *fileTree, input io.Reader, size int64) (string, *searpc.RPCError) {
+func (w *fileWriter) indexLocalFile(ctx context.Context, tree *fileTree, input io.Reader, size int64) (string, *searpc.RPCError) {
 	var key, iv []byte
 	if tree.repo.IsEncrypted {
 		key, iv = w.passwords.copyKey(tree.repo.ID, tree.user)
@@ -121,36 +121,36 @@ func (w *fileWriter) indexPutFile(ctx context.Context, tree *fileTree, input io.
 	var blockIDs []string
 	for remaining := size; remaining > 0; remaining -= blockSize {
 		if err := ctx.Err(); err != nil {
-			return "", fileWriteFailure("index PUT file", err)
+			return "", fileWriteFailure("index local file", err)
 		}
 		content := block[:min(remaining, blockSize)]
 		if _, err := io.ReadFull(input, content); err != nil {
-			return "", fileWriteFailure("read PUT input", err)
+			return "", fileWriteFailure("read local input", err)
 		}
 		if key != nil {
 			ciphertext, err := repocrypt.Encrypt(tree.repo.EncVersion, key, iv, content)
 			if err != nil {
-				return "", fileWriteFailure("encrypt PUT block", err)
+				return "", fileWriteFailure("encrypt local block", err)
 			}
 			content = ciphertext
 		}
 		sum := sha1.Sum(content)
 		id := hex.EncodeToString(sum[:])
 		if err := tree.reader.blocks.Write(tree.repo.StoreID, id, bytes.NewReader(content), true); err != nil {
-			return "", fileWriteFailure("write PUT block", err)
+			return "", fileWriteFailure("write local block", err)
 		}
 		blockIDs = append(blockIDs, id)
 	}
 	file, err := fsmgr.NewSeafile(tree.repo.Version, size, blockIDs)
 	if err != nil {
-		return "", fileWriteFailure("encode PUT file", err)
+		return "", fileWriteFailure("encode local file", err)
 	}
 	var data bytes.Buffer
 	if err := file.ToData(&data); err != nil {
-		return "", fileWriteFailure("compress PUT file", err)
+		return "", fileWriteFailure("compress local file", err)
 	}
 	if err := tree.reader.fs.Write(tree.repo.StoreID, file.FileID, &data, true); err != nil {
-		return "", fileWriteFailure("write PUT file", err)
+		return "", fileWriteFailure("write local file", err)
 	}
 	return file.FileID, nil
 }

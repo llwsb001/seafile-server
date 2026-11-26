@@ -2,6 +2,8 @@
 
 库生命周期和离线维护已交付，下一阶段把已合入的 Go 组件做成可安装、可升级、可回退的 Linux SQLite 发行候选。候选沿用现有数据目录和客户端协议，通过明确的配置选择启用。首轮在 Linux amd64 完成全量验收，并在原生 Linux arm64 复验安装和接管。MySQL、FUSE、生产默认切换及 C 构建清理留待后续批次。 [迁移总计划](go-migration-plan.md) · [上一阶段计划](go-migration-sqlite-lifecycle-maintenance.md)
 
+候选版本、实际回放结果和当前签收状态见 [发行候选验收记录](go-migration-sqlite-release-acceptance.md)。
+
 ## 起点
 
 | 项目 | 锁定版本与状态 |

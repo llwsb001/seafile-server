@@ -38,7 +38,7 @@ make -C "$SEAFILE_COMPAT_TESTS" test-data IMPL=c-baseline FIXTURES_DIR="$SEAFILE
 | 5 | 迁仓库和文件写入、回滚、回收站、历史、固定分块、CDC、加密、并发合并和后台任务。SQLite 建库和目录分享见 [第一批写入](go-migration-sqlite-next.md#阶段-5-的第一批写入)。 | 落盘对象后按旧 head 条件更新 `Branch`。对拍并发、重试和中断后的对象与数据库状态，验证 `GCID`、`LastGCID` 及虚拟库合并。新样本覆盖冲突提交的第二父提交、支持的加密版本和旧对象版本。 |
 | 6 | 用现有 Go `fileserver` 接替 C HTTP。先按 [SQLite 文件服务迁移计划](go-migration-sqlite-fileserver.md) 完成 SQLite 启动、传输、同步及切换。 | MySQL、SQLite 都通过 HTTP 测试和真实桌面客户端的双端同步。检查 `/update-blks-api`、上传进度、Range、文件名编码、大文件、配额和错误响应。 |
 | 7 | 迁 `seafserv-gc`、`seaf-fsck`、`seafile-controller` 和可选 FUSE。 | GC 和 fsck 先跑校验、导出及 dry-run，在隔离副本验证修复和删除。核对候选对象、可达对象和修复后的 head。验证 controller 启停与重启，以及 FUSE 挂载、列目录和文件读取。 |
-| 8 | 发行演练、灰度和构建清理。 | 两种数据库都完成 C 写入 → Go 读写 → C 读写。比较相同负载下的同步延迟、吞吐和内存，合入前记录基线及允许偏差。确认安装产物消费者后，清理本仓库中已被替换的 C、Vala 和 Autotools 构建入口。 |
+| 8 | 发行演练、灰度和构建清理。先按 [SQLite 发行候选与切换演练计划](go-migration-sqlite-release.md) 交付可选择启用的 Linux SQLite 候选。 | 两种数据库分别完成 C 写入 → Go 读写 → C 读写。比较相同负载下的同步延迟、吞吐和内存，合入前记录基线及允许偏差。确认安装产物消费者后，清理本仓库中已被替换的 C、Vala 和 Autotools 构建入口。 |
 
 在 [Searpc 注册表](../server/seaf-server.c)、[C HTTP 路由](../server/http-server.c)、[Go HTTP 路由](../fileserver/fileserver.go) 和 [安装规则](../lib/Makefile.am) 中查找阶段 3 至 8 的契约。已有 [Python 集成测试](../tests) 提供库操作、权限、回收站、虚拟库和 GC 的回归用例。端到端测试由现有 Python 客户端、Seahub 和桌面客户端调用被测服务。
 

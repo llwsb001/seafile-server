@@ -464,6 +464,14 @@ func uncompress(p []byte, reader io.ReadCloser) ([]byte, error) {
 	return out.Bytes(), nil
 }
 
+func verifyObjectID(id string, data []byte) error {
+	sum := sha1.Sum(data)
+	if hex.EncodeToString(sum[:]) != id {
+		return fmt.Errorf("object ID %s does not match its contents", id)
+	}
+	return nil
+}
+
 func compress(p []byte) ([]byte, error) {
 	var out bytes.Buffer
 	w := zlib.NewWriter(&out)
@@ -485,8 +493,11 @@ func (seafile *Seafile) FromData(p []byte, reader io.ReadCloser) error {
 	if err != nil {
 		return err
 	}
-	err = json.Unmarshal(b, seafile)
-	if err != nil {
+	return seafile.fromJSON(b)
+}
+
+func (seafile *Seafile) fromJSON(b []byte) error {
+	if err := json.Unmarshal(b, seafile); err != nil {
 		return err
 	}
 
@@ -544,8 +555,11 @@ func (seafdir *SeafDir) FromData(p []byte, reader io.ReadCloser) error {
 	if err != nil {
 		return err
 	}
-	err = json.Unmarshal(b, seafdir)
-	if err != nil {
+	return seafdir.fromJSON(b)
+}
+
+func (seafdir *SeafDir) fromJSON(b []byte) error {
+	if err := json.Unmarshal(b, seafdir); err != nil {
 		return err
 	}
 	if seafdir.DirType != SeafMetadataTypeDir {
@@ -558,6 +572,9 @@ func (seafdir *SeafDir) FromData(p []byte, reader io.ReadCloser) error {
 		return fmt.Errorf("no dirents in dir object %s", seafdir.DirID)
 	}
 	for _, dent := range seafdir.Entries {
+		if dent == nil {
+			return fmt.Errorf("null dirent in dir object %s", seafdir.DirID)
+		}
 		if !utils.IsObjectIDValid(dent.ID) {
 			return fmt.Errorf("dirent id %s is invalid", dent.ID)
 		}
@@ -596,15 +613,20 @@ func GetSeafileWithZlibReader(repoID string, fileID string, reader io.ReadCloser
 }
 
 func getSeafile(repoID string, fileID string, reader io.ReadCloser) (*Seafile, error) {
-	return readSeafile(store, repoID, fileID, defaultReadVersion(), reader)
+	return readSeafile(store, repoID, fileID, defaultReadVersion(), reader, false)
 }
 
 // ReadSeafile loads a file object from the given store and repository version.
 func ReadSeafile(objects *objstore.ObjectStore, repoID, fileID string, version int) (*Seafile, error) {
-	return readSeafile(objects, repoID, fileID, version, nil)
+	return readSeafile(objects, repoID, fileID, version, nil, false)
 }
 
-func readSeafile(objects *objstore.ObjectStore, repoID, fileID string, version int, reader io.ReadCloser) (*Seafile, error) {
+// ReadVerifiedSeafile loads an FS object and verifies its on-disk object ID.
+func ReadVerifiedSeafile(objects *objstore.ObjectStore, repoID, fileID string, version int) (*Seafile, error) {
+	return readSeafile(objects, repoID, fileID, version, nil, true)
+}
+
+func readSeafile(objects *objstore.ObjectStore, repoID, fileID string, version int, reader io.ReadCloser, verify bool) (*Seafile, error) {
 	if fileID == EmptySha1 {
 		return &Seafile{FileID: EmptySha1}, nil
 	}
@@ -616,10 +638,24 @@ func readSeafile(objects *objstore.ObjectStore, repoID, fileID string, version i
 		return nil, fmt.Errorf("read file object %s/%s: %w", repoID, fileID, err)
 	}
 	if isLegacyObject(version, buf.Bytes(), SeafMetadataTypeFile) {
-		return decodeLegacyFile(fileID, buf.Bytes())
+		file, err := decodeLegacyFile(fileID, buf.Bytes())
+		if err == nil && verify {
+			err = verifyObjectID(fileID, buf.Bytes()[legacyFileHeaderSize:])
+		}
+		if err != nil {
+			return nil, err
+		}
+		return file, nil
 	}
 	seafile := &Seafile{FileID: fileID}
-	if err := seafile.FromData(buf.Bytes(), reader); err != nil {
+	data, err := uncompress(buf.Bytes(), reader)
+	if err == nil && verify {
+		err = verifyObjectID(fileID, data)
+	}
+	if err == nil {
+		err = seafile.fromJSON(data)
+	}
+	if err != nil {
 		return nil, fmt.Errorf("parse file object %s/%s: %w", repoID, fileID, err)
 	}
 
@@ -671,7 +707,7 @@ func getSeafdir(repoID string, dirID string, reader io.ReadCloser, useCache bool
 			return dir, nil
 		}
 	}
-	seafdir, err := readSeafdir(store, repoID, dirID, defaultReadVersion(), reader)
+	seafdir, err := readSeafdir(store, repoID, dirID, defaultReadVersion(), reader, false)
 	if err != nil {
 		return nil, err
 	}
@@ -683,10 +719,15 @@ func getSeafdir(repoID string, dirID string, reader io.ReadCloser, useCache bool
 
 // ReadSeafdir loads a directory object from the given store and repository version.
 func ReadSeafdir(objects *objstore.ObjectStore, repoID, dirID string, version int) (*SeafDir, error) {
-	return readSeafdir(objects, repoID, dirID, version, nil)
+	return readSeafdir(objects, repoID, dirID, version, nil, false)
 }
 
-func readSeafdir(objects *objstore.ObjectStore, repoID, dirID string, version int, reader io.ReadCloser) (*SeafDir, error) {
+// ReadVerifiedSeafdir loads an FS object and verifies its on-disk object ID.
+func ReadVerifiedSeafdir(objects *objstore.ObjectStore, repoID, dirID string, version int) (*SeafDir, error) {
+	return readSeafdir(objects, repoID, dirID, version, nil, true)
+}
+
+func readSeafdir(objects *objstore.ObjectStore, repoID, dirID string, version int, reader io.ReadCloser, verify bool) (*SeafDir, error) {
 	if dirID == EmptySha1 {
 		return &SeafDir{DirID: EmptySha1}, nil
 	}
@@ -698,10 +739,24 @@ func readSeafdir(objects *objstore.ObjectStore, repoID, dirID string, version in
 		return nil, fmt.Errorf("read directory object %s/%s: %w", repoID, dirID, err)
 	}
 	if isLegacyObject(version, buf.Bytes(), SeafMetadataTypeDir) {
-		return decodeLegacyDir(dirID, buf.Bytes())
+		dir, err := decodeLegacyDir(dirID, buf.Bytes())
+		if err == nil && verify {
+			err = verifyLegacyDirID(dir)
+		}
+		if err != nil {
+			return nil, err
+		}
+		return dir, nil
 	}
 	seafdir := &SeafDir{DirID: dirID}
-	if err := seafdir.FromData(buf.Bytes(), reader); err != nil {
+	data, err := uncompress(buf.Bytes(), reader)
+	if err == nil && verify {
+		err = verifyObjectID(dirID, data)
+	}
+	if err == nil {
+		err = seafdir.fromJSON(data)
+	}
+	if err != nil {
 		return nil, fmt.Errorf("parse directory object %s/%s: %w", repoID, dirID, err)
 	}
 	return seafdir, nil

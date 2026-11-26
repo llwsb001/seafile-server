@@ -86,6 +86,21 @@ make -C "$SEAFILE_COMPAT_TESTS" test-sqlite-maintenance \
   SEAFILE_TARGET_FSCK_BIN="$SEAFILE_TARGET_FSCK_BIN" SEAFILE_TARGET_GC_BIN="$SEAFILE_TARGET_GC_BIN"
 ```
 
+### 运行 Go `seaf-fsck` 检查
+
+从仓库根目录构建，并对已停止写入的 Linux SQLite 数据或其副本运行。存在 SQLite WAL 或回滚日志时，命令先把数据库及日志复制到临时目录，再在副本中完成 SQLite 恢复和查询。
+
+```sh
+go -C fileserver build -o "$SEAFILE_TARGET_FSCK_BIN" ./cmd/seaffsck
+"$SEAFILE_TARGET_FSCK_BIN" -F "$CENTRAL_CONFIG_DIR" -d "$SEAFILE_DATA_DIR" --threads 2
+```
+
+默认校验所选库当前文件树的 FS 对象和块哈希。`-s` 保留 FS 校验，块只检查是否存在。`-S` 对比目录项记录的大小和文件对象大小。`-i` 按库 ID 前缀选择，传入前缀时以该选择为准。日志报告库内损坏和可用的旧提交，命令仍返回 `0`，沿用 C 的行为。用 `SCENARIO_SET=fsck-check` 复跑只读检查。
+
+用 `-E "$EXPORT_DIR" "$REPO_ID"` 导出指定库，省略库 ID 时扫描磁盘上的 commit 存储。导出不依赖 SQLite，使用最新的可读提交，跳过加密库。缺失块或文件元数据会使该文件导出失败，其余文件继续。目标目录须在源数据与对象存储之外。用 `SCENARIO_SET=fsck-export` 核对导出树、文件 SHA-256 和源数据变化。
+
+停止全部写入方后，在隔离副本用 `-r "$REPO_ID"` 修复所选库。Go 先落盘替换目录和提交，再在同一个 SQLite 事务中更新预期的 `master` 引用并吊销库同步令牌。确认发布后清理内容不符的块。对象写入或 SQLite 提交失败时保留原分支和令牌，已经落盘的孤立对象可由后续 GC 回收。用兼容仓库的 `test-sqlite-fsck-repair` 回放失败、重复修复、Go 重启和 C 接管。
+
 ### 分阶段检查同一数据
 
 1. **准备和冻结。** 为 C/C、C/Go 分别复制 SQLite 与对象目录。加入普通、加密、虚拟、回收站库存量，以及合并提交、旧历史、空文件、大文件和孤立对象。人为缺失、损坏和故障注入各用独立副本。记录 SHA-256、对象 ID、角色、时间边界和预期引用。

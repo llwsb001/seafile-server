@@ -188,3 +188,134 @@ func TestAdminRepoSearch(t *testing.T) {
 		t.Fatalf("file counts from name and ID lookup = %v and %v", names[0]["file-count"], identifiers[0]["file-count"])
 	}
 }
+
+func TestAdminSystemDefaultRepo(t *testing.T) {
+	reader := adminRepoFixture(t)
+	checkDefault := func(want string) {
+		t.Helper()
+		value, rpcErr := callAdminRepoRPC(t, reader, "get_system_default_repo_id")
+		if rpcErr != nil {
+			t.Fatal(rpcErr)
+		}
+		valueJSON, err := json.Marshal(value)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(valueJSON) != want {
+			t.Fatalf("default repository = %s, want %s", valueJSON, want)
+		}
+	}
+	checkDefault("null")
+	if _, err := reader.db.Exec("INSERT INTO SystemInfo VALUES ('unrelated', ?), ('default_repo_id', ?)",
+		adminSecond, adminFirst); err != nil {
+		t.Fatal(err)
+	}
+	checkDefault(`"` + adminFirst + `"`)
+	if _, err := reader.db.Exec("DELETE FROM Repo WHERE repo_id = ?", adminFirst); err != nil {
+		t.Fatal(err)
+	}
+	checkDefault(`"` + adminFirst + `"`)
+}
+
+func TestAdminRepoStorageAndOrphans(t *testing.T) {
+	reader := adminRepoFixture(t)
+	const (
+		sizeRPC   = "seafile_server_repo_size"
+		orphanRPC = "seafile_get_orphan_repo_list"
+	)
+	for _, test := range []struct {
+		id        any
+		size      int64
+		errorText string
+	}{
+		{adminFirst, 5, ""},
+		{adminVirtual, 99, ""},
+		{adminMissing, 0, ""},
+		{adminStale, 100, ""},
+		{"12345678-aaaa-4000-8000-000000000099", 0, ""},
+		{nil, -1, "Bad repo id"},
+		{"short", -1, "Bad repo id"},
+		{"12345678-aaaa-4000-8000-0000000000ZZ", -1, "Invalid repo id"},
+	} {
+		value, rpcErr := callAdminRepoRPC(t, reader, sizeRPC, test.id)
+		if value != test.size ||
+			(test.errorText == "" && rpcErr != nil) ||
+			(test.errorText != "" && (rpcErr == nil || rpcErr.Code != errBadArgs || rpcErr.Message != test.errorText)) {
+			t.Fatalf("size(%v) = %v, %v", test.id, value, rpcErr)
+		}
+	}
+
+	const owner = "admin@example.test"
+	created, rpcErr := reader.createRepo(context.Background(), reader.db, fileWriteRPCArgs(t, "Orphan library", "From the head", owner))
+	if rpcErr != nil {
+		t.Fatal(rpcErr)
+	}
+	id := created.(string)
+	checkAdminRepoIDs(t, listAdminRepoRPC(t, reader, orphanRPC), nil)
+	if _, err := reader.db.Exec("DELETE FROM RepoOwner WHERE repo_id = ?", id); err != nil {
+		t.Fatal(err)
+	}
+	repos := listAdminRepoRPC(t, reader, orphanRPC)
+	checkAdminRepoIDs(t, repos, []string{id})
+	if got := repos[0]; got["repo-name"] != "Orphan library" || got["repo-desc"] != "From the head" ||
+		got["store-id"] != id || got["root"] != "0000000000000000000000000000000000000000" {
+		t.Fatalf("orphan repository object = %+v", got)
+	}
+}
+
+func TestAdminRepoTotals(t *testing.T) {
+	reader := adminRepoFixture(t)
+	checkTotals := func(files, storage int64) {
+		t.Helper()
+		for _, check := range []struct {
+			method string
+			want   int64
+		}{
+			{"get_total_file_number", files},
+			{"get_total_storage", storage},
+		} {
+			value, rpcErr := callAdminRepoRPC(t, reader, check.method)
+			if value != check.want || rpcErr != nil {
+				t.Fatalf("%s = %v, %v, want %d", check.method, value, rpcErr, check.want)
+			}
+		}
+	}
+	checkTotals(46, 195)
+	if _, err := reader.db.Exec("UPDATE RepoFileCount SET file_count = 4294967300 WHERE repo_id = ?", adminFirst); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := reader.db.Exec("UPDATE RepoSize SET size = 8589934592 WHERE repo_id = ?", adminFirst); err != nil {
+		t.Fatal(err)
+	}
+	checkTotals(4294967344, 8589934782)
+	if _, err := reader.db.Exec("DELETE FROM Repo WHERE repo_id = ?", adminFirst); err != nil {
+		t.Fatal(err)
+	}
+	checkTotals(44, 8589934782)
+	if _, err := reader.db.Exec("DELETE FROM RepoFileCount; DELETE FROM RepoSize"); err != nil {
+		t.Fatal(err)
+	}
+	checkTotals(0, 0)
+}
+
+func TestAdminRepoBranches(t *testing.T) {
+	reader := adminRepoFixture(t)
+	const method = "seafile_branch_gets"
+	rows := listAdminRepoRPC(t, reader, method, adminFirst)
+	if len(rows) != 2 || rows[0]["name"] != "master" || rows[1]["name"] != "backup" ||
+		rows[0]["commit-id"] != adminHead || rows[1]["commit-id"] != adminBackup ||
+		rows[0]["repo-id"] != adminFirst || rows[1]["repo-id"] != adminFirst {
+		t.Fatalf("branches = %+v", rows)
+	}
+	rows = listAdminRepoRPC(t, reader, method, adminStale)
+	if len(rows) != 1 || rows[0]["name"] != "master" || rows[0]["repo-id"] != adminStale {
+		t.Fatalf("branches for stale repository = %+v", rows)
+	}
+	checkAdminRepoIDs(t, listAdminRepoRPC(t, reader, method, "12345678-aaaa-4000-8000-000000000099"), nil)
+	for _, input := range []any{nil, "not-an-id"} {
+		if _, rpcErr := callAdminRepoRPC(t, reader, method, input); rpcErr == nil ||
+			rpcErr.Code != errBadArgs || rpcErr.Message != "Invalid repo id" {
+			t.Fatalf("branches for %v returned %v", input, rpcErr)
+		}
+	}
+}

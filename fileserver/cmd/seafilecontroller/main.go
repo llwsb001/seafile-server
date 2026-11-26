@@ -60,14 +60,28 @@ func run(args []string) error {
 }
 
 func testServerConfig(c config) error {
-	path, err := c.binary("seaf-server")
-	if err != nil {
+	args := []string{"-F", c.central, "-c", c.ccnet, "-d", c.data, "-t"}
+	if !c.useGo {
+		return runConfigCheck(c, "seaf-server", append(args, "-f"))
+	}
+	if err := runConfigCheck(c, "seaf-server-go", args); err != nil {
 		return err
 	}
-	cmd := exec.Command(path, "-F", c.central, "-c", c.ccnet, "-d", c.data, "-t", "-f")
+	return runConfigCheck(c, "fileserver", args)
+}
+
+func runConfigCheck(c config, name string, args []string) error {
+	path, err := c.binary(name)
+	if err != nil {
+		return fmt.Errorf("check %s configuration: %w", name, err)
+	}
+	cmd := exec.Command(path, args...)
 	cmd.Env = c.env
 	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stdout
-	return cmd.Run()
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("check %s configuration: %w", name, err)
+	}
+	return nil
 }
 
 func startBackground(c config, args []string) error {

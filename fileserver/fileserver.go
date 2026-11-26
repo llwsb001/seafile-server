@@ -45,6 +45,7 @@ var logFp *os.File
 var seafileDB, ccnetDB *sql.DB
 
 var logToStdout bool
+var testConfig bool
 
 func init() {
 	flag.StringVar(&centralDir, "F", "", "central config directory")
@@ -53,6 +54,7 @@ func init() {
 	flag.StringVar(&logFile, "l", "", "log file path")
 	flag.StringVar(&rpcPipePath, "p", "", "rpc pipe path")
 	flag.StringVar(&pidFilePath, "P", "", "pid file path")
+	flag.BoolVar(&testConfig, "t", false, "validate the SQLite configuration without starting the fileserver")
 
 	env := os.Getenv("SEAFILE_LOG_TO_STDOUT")
 	if env == "true" {
@@ -120,33 +122,11 @@ func runFileServer(ctx context.Context) error {
 		return fmt.Errorf("resolve seafile data directory: %w", err)
 	}
 
-	if logToStdout {
-		// Use default output (StdOut)
-	} else if logFile == "" {
-		absLogFile = filepath.Join(absDataDir, "fileserver.log")
-		fp, err := os.OpenFile(absLogFile, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0644)
-		if err != nil {
-			return fmt.Errorf("open fileserver log: %w", err)
+	if !testConfig {
+		if err := configureLogging(); err != nil {
+			return err
 		}
-		logFp = fp
-		log.SetOutput(fp)
-	} else if logFile != "-" {
-		absLogFile, err = filepath.Abs(logFile)
-		if err != nil {
-			return fmt.Errorf("resolve fileserver log path: %w", err)
-		}
-		fp, err := os.OpenFile(absLogFile, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0644)
-		if err != nil {
-			return fmt.Errorf("open fileserver log: %w", err)
-		}
-		logFp = fp
-		log.SetOutput(fp)
 	}
-
-	if absLogFile != "" && !logToStdout {
-		utils.Dup(int(logFp.Fd()), int(os.Stderr.Fd()))
-	}
-	// When logFile is "-", use default output (StdOut)
 
 	if err := option.LoadSeahubConfig(); err != nil {
 		return fmt.Errorf("read seahub config: %w", err)
@@ -155,6 +135,9 @@ func runFileServer(ctx context.Context) error {
 	dbOptions, err := option.LoadDBOption(centralDir)
 	if err != nil {
 		return fmt.Errorf("load database configuration: %w", err)
+	}
+	if testConfig && dbOptions.DBEngine != "sqlite" {
+		return errors.New("fileserver configuration check requires database type sqlite")
 	}
 
 	startup, cancel := context.WithTimeout(ctx, 5*time.Second)
@@ -165,6 +148,9 @@ func runFileServer(ctx context.Context) error {
 	}
 	defer seafileDB.Close()
 	defer ccnetDB.Close()
+	if testConfig {
+		return nil
+	}
 	if err := rpcClientInit(startup, dbOptions.DBEngine == "sqlite"); err != nil {
 		return err
 	}
@@ -250,6 +236,28 @@ func runFileServer(ctx context.Context) error {
 		}
 		return nil
 	}
+}
+
+func configureLogging() error {
+	if logToStdout || logFile == "-" {
+		return nil
+	}
+	absLogFile = filepath.Join(absDataDir, "fileserver.log")
+	if logFile != "" {
+		path, err := filepath.Abs(logFile)
+		if err != nil {
+			return fmt.Errorf("resolve fileserver log path: %w", err)
+		}
+		absLogFile = path
+	}
+	fp, err := os.OpenFile(absLogFile, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0644)
+	if err != nil {
+		return fmt.Errorf("open fileserver log: %w", err)
+	}
+	logFp = fp
+	log.SetOutput(logFp)
+	utils.Dup(int(logFp.Fd()), int(os.Stderr.Fd()))
+	return nil
 }
 
 func handleUser1Signal(ctx context.Context) {

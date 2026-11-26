@@ -211,9 +211,10 @@ func (c config) childEnv(top, davPath string) []string {
 
 func (c config) binary(name string) (string, error) {
 	// Management scripts put the package bin directory on PATH. Prefer the
-	// companion executable even if a caller invokes the controller directly.
-	if path, err := exec.LookPath(filepath.Join(c.bin, name)); err == nil {
-		return path, nil
+	// companion executable and require it when the Go package is selected.
+	path, err := exec.LookPath(filepath.Join(c.bin, name))
+	if err == nil || c.useGo {
+		return path, err
 	}
 	return exec.LookPath(name)
 }

@@ -31,7 +31,7 @@ func main() {
 func run(ctx context.Context, args []string) error {
 	flags := flag.NewFlagSet("seaf-server", flag.ContinueOnError)
 	var dataDir, confDir, socketDir, ccnetDir, pidFile string
-	var foreground, enableShareWrites, enableManagementRPCs bool
+	var foreground, testConfig, enableShareWrites, enableManagementRPCs bool
 	flags.StringVar(&dataDir, "d", "", "seafile data directory")
 	flags.StringVar(&dataDir, "seafdir", "", "seafile data directory")
 	flags.StringVar(&confDir, "F", "", "central configuration directory")
@@ -43,13 +43,15 @@ func run(ctx context.Context, args []string) error {
 	flags.StringVar(&pidFile, "P", "", "PID file path")
 	flags.BoolVar(&foreground, "f", false, "run in the foreground")
 	flags.BoolVar(&foreground, "foreground", false, "run in the foreground")
+	flags.BoolVar(&testConfig, "t", false, "validate the SQLite configuration without starting the server")
+	flags.BoolVar(&testConfig, "test", false, "validate the SQLite configuration without starting the server")
 	flags.BoolVar(&enableShareWrites, "enable-share-writes", false, "enable ordinary SQLite share writes")
 	flags.BoolVar(&enableManagementRPCs, "enable-management-rpcs", false, "enable management RPCs on a private socket")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
-	if !foreground || dataDir == "" || flags.NArg() != 0 {
-		return errors.New("usage: seaf-server -f -d data-dir [-F config-dir] [-c ccnet-dir] [-p socket-dir] [--enable-share-writes] [--enable-management-rpcs]")
+	if (!foreground && !testConfig) || dataDir == "" || flags.NArg() != 0 {
+		return errors.New("usage: seaf-server [-f|-t] -d data-dir [-F config-dir] [-c ccnet-dir] [-p socket-dir] [--enable-share-writes] [--enable-management-rpcs]")
 	}
 	if enableShareWrites && ccnetDir == "" {
 		return errors.New("--enable-share-writes requires -c")
@@ -82,21 +84,31 @@ func run(ctx context.Context, args []string) error {
 	}
 	defer db.Close()
 
-	reader := seafserver.NewReader(db, dataDir)
-	serverConfig := seafserver.NewServerConfig(db, confData)
-	handlers := reader.RPCHandlers(serverConfig)
-	maps.Copy(handlers, reader.EventRPCHandlers())
-	quota := seafserver.NewUserQuota(db, serverConfig)
-	maps.Copy(handlers, quota.RPCHandlers())
 	var identity *seafserver.Identity
-	cloudModeValue := config.Section("general").Key("cloud_mode").String()
-	cloudMode := cloudModeValue == "true" || cloudModeValue == "1"
 	if ccnetDir != "" {
 		identity, err = seafserver.OpenIdentityReadOnly(ctx, ccnetDir)
 		if err != nil {
 			return err
 		}
 		defer identity.Close()
+	}
+	tokenMode, tokenTTL, err := webTokenSettings(confData, os.Getenv("ENABLE_GO_FILESERVER"))
+	if err != nil {
+		return fmt.Errorf("load Web access token settings from %s: %w", confPath, err)
+	}
+	if testConfig {
+		return nil
+	}
+
+	reader := seafserver.NewReader(db, dataDir)
+	serverConfig := seafserver.NewServerConfig(db, confData)
+	handlers := reader.RPCHandlers(serverConfig)
+	maps.Copy(handlers, reader.EventRPCHandlers())
+	quota := seafserver.NewUserQuota(db, serverConfig)
+	maps.Copy(handlers, quota.RPCHandlers())
+	cloudModeValue := config.Section("general").Key("cloud_mode").String()
+	cloudMode := cloudModeValue == "true" || cloudModeValue == "1"
+	if identity != nil {
 		maps.Copy(handlers, identity.RPCHandlers())
 		handlers["seafile_get_user_share_usage"] = quota.ShareUsageRPC(identity)
 		maps.Copy(handlers, reader.PermissionRPCHandlers(identity, cloudMode))
@@ -163,10 +175,6 @@ func run(ctx context.Context, args []string) error {
 			defer accounts.Close()
 			maps.Copy(handlers, accounts.RPCHandlers())
 		}
-	}
-	tokenMode, tokenTTL, err := webTokenSettings(confData, os.Getenv("ENABLE_GO_FILESERVER"))
-	if err != nil {
-		return fmt.Errorf("load Web access token settings from %s: %w", confPath, err)
 	}
 	socketPath := filepath.Join(socketDir, "seafile.sock")
 	if pidFile != "" {

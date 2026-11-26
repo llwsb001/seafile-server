@@ -48,6 +48,7 @@ func (r *Reader) FileWriteRPCHandlers(ctx context.Context, db *sql.DB, identity 
 	return map[string]searpc.Handler{
 		"seafile_revert_on_server":   writer.revertRepo,
 		"seafile_post_file":          writer.postFile,
+		"seafile_post_multi_files":   writer.postMultiFiles,
 		"seafile_post_empty_file":    writer.edit(4, createFileEntry(false)),
 		"seafile_put_file":           writer.putFile,
 		"seafile_post_dir":           writer.edit(4, createFileEntry(true)),
@@ -178,21 +179,26 @@ func (w *fileWriter) prepareCommit(tree *fileTree, description string) (*commitm
 }
 
 func (w *fileWriter) prepareCommitAfter(tree *fileTree, description string, parent *commitmgr.Commit) (*commitmgr.Commit, error) {
+	commit := newFileWriteCommit(tree, description, parent, tree.now)
+	var payload bytes.Buffer
+	if err := commit.ToData(&payload); err != nil {
+		return nil, err
+	}
+	if err := w.reader.commits.Write(commit.RepoID, commit.CommitID, &payload, true); err != nil {
+		return nil, err
+	}
+	return commit, nil
+}
+
+func newFileWriteCommit(tree *fileTree, description string, parent *commitmgr.Commit, timestamp int64) *commitmgr.Commit {
 	repo := tree.repo
-	commit := newInitialRepoCommit(repo.ID, tree.root, repo.Name, repo.Desc, description, tree.user, repo.Version, tree.now)
+	commit := newInitialRepoCommit(repo.ID, tree.root, repo.Name, repo.Desc, description, tree.user, repo.Version, timestamp)
 	commit.ParentID.SetValid(parent.CommitID)
 	commit.Encrypted, commit.EncVersion = parent.Encrypted, parent.EncVersion
 	commit.Magic, commit.RandomKey, commit.Salt = parent.Magic, parent.RandomKey, parent.Salt
 	commit.PwdHash, commit.PwdHashAlgo, commit.PwdHashParams = parent.PwdHash, parent.PwdHashAlgo, parent.PwdHashParams
 	commit.NoLocalHistory, commit.Repaired = parent.NoLocalHistory, parent.Repaired
-	var payload bytes.Buffer
-	if err := commit.ToData(&payload); err != nil {
-		return nil, err
-	}
-	if err := w.reader.commits.Write(repo.ID, commit.CommitID, &payload, true); err != nil {
-		return nil, err
-	}
-	return commit, nil
+	return commit
 }
 
 func fileWriteFailure(action string, err error) *searpc.RPCError {

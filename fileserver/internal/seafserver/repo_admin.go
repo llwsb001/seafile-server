@@ -24,6 +24,7 @@ func (r *Reader) AdminRepoReadRPCHandlers() map[string]searpc.Handler {
 		"seafile_get_orphan_repo_list":   r.listOrphanRepos,
 		"get_total_file_number":          r.totalAdminRepoFiles,
 		"get_total_storage":              r.totalAdminRepoStorage,
+		"seafile_branch_gets":            r.adminRepoBranches,
 	}
 }
 

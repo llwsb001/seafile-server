@@ -297,3 +297,25 @@ func TestAdminRepoTotals(t *testing.T) {
 	}
 	checkTotals(0, 0)
 }
+
+func TestAdminRepoBranches(t *testing.T) {
+	reader := adminRepoFixture(t)
+	const method = "seafile_branch_gets"
+	rows := listAdminRepoRPC(t, reader, method, adminFirst)
+	if len(rows) != 2 || rows[0]["name"] != "master" || rows[1]["name"] != "backup" ||
+		rows[0]["commit-id"] != adminHead || rows[1]["commit-id"] != adminBackup ||
+		rows[0]["repo-id"] != adminFirst || rows[1]["repo-id"] != adminFirst {
+		t.Fatalf("branches = %+v", rows)
+	}
+	rows = listAdminRepoRPC(t, reader, method, adminStale)
+	if len(rows) != 1 || rows[0]["name"] != "master" || rows[0]["repo-id"] != adminStale {
+		t.Fatalf("branches for stale repository = %+v", rows)
+	}
+	checkAdminRepoIDs(t, listAdminRepoRPC(t, reader, method, "12345678-aaaa-4000-8000-000000000099"), nil)
+	for _, input := range []any{nil, "not-an-id"} {
+		if _, rpcErr := callAdminRepoRPC(t, reader, method, input); rpcErr == nil ||
+			rpcErr.Code != errBadArgs || rpcErr.Message != "Invalid repo id" {
+			t.Fatalf("branches for %v returned %v", input, rpcErr)
+		}
+	}
+}

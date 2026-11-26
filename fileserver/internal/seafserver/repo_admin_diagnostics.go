@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log"
+	"slices"
 
 	"github.com/haiwen/seafile-server/fileserver/searpc"
 )
@@ -93,4 +94,35 @@ func (r *Reader) adminRepoTotal(ctx context.Context, query, errorMessage string)
 		return int64(-1), rpcError(errGeneral, errorMessage)
 	}
 	return value, nil
+}
+
+func (r *Reader) adminRepoBranches(ctx context.Context, args []json.RawMessage) (any, *searpc.RPCError) {
+	id := stringArgument(args, 0)
+	if id == nil || !validRepoID(*id) {
+		return nil, rpcError(errBadArgs, "Invalid repo id")
+	}
+	const query = "SELECT name, repo_id, commit_id FROM Branch WHERE repo_id = ?"
+	rows, err := r.db.QueryContext(ctx, query, *id)
+	if err != nil {
+		log.Printf("query repository branches: %v", err)
+		return nil, nil
+	}
+	defer rows.Close()
+
+	var result []map[string]string
+	for rows.Next() {
+		var name, repoID, commitID string
+		if err := rows.Scan(&name, &repoID, &commitID); err != nil {
+			log.Printf("scan repository branch: %v", err)
+			return nil, nil
+		}
+		result = append(result, map[string]string{"name": name, "repo-id": repoID, "commit-id": commitID})
+	}
+	if err := rows.Err(); err != nil {
+		log.Printf("read repository branches: %v", err)
+		return nil, nil
+	}
+	// The C branch collector prepends records in SQLite index-scan order.
+	slices.Reverse(result)
+	return result, nil
 }

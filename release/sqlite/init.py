@@ -101,7 +101,8 @@ def initialize(version: Path) -> None:
     }
     conf = instance / "conf"
     for directory in (conf, instance / "ccnet", instance / "seafile-data", instance / "seafile-data/storage",
-                      instance / "seahub-data", instance / "logs", instance / "pids", version / "runtime"):
+                      instance / "seahub-data", instance / "staged-import", instance / "logs", instance / "pids",
+                      version / "runtime"):
         directory.mkdir(mode=0o700, parents=True, exist_ok=True)
 
     for name, content in configs.items():

@@ -19,21 +19,23 @@ import (
 
 // Reader reads repositories from the database and its companion object storage.
 type Reader struct {
-	db      *sql.DB
-	commits *objstore.ObjectStore
-	fs      *objstore.ObjectStore
-	blocks  *objstore.ObjectStore
-	events  *eventQueue
+	db               *sql.DB
+	commits          *objstore.ObjectStore
+	fs               *objstore.ObjectStore
+	blocks           *objstore.ObjectStore
+	events           *eventQueue
+	stagedImportRoot string
 }
 
 // NewReader uses an existing database connection and a seafile-data directory.
 func NewReader(db *sql.DB, dataDir string) *Reader {
 	return &Reader{
-		db:      db,
-		commits: objstore.OpenFilesystem(dataDir, "commits"),
-		fs:      objstore.OpenFilesystem(dataDir, "fs"),
-		blocks:  objstore.OpenFilesystem(dataDir, "blocks"),
-		events:  newEventQueue(),
+		db:               db,
+		commits:          objstore.OpenFilesystem(dataDir, "commits"),
+		fs:               objstore.OpenFilesystem(dataDir, "fs"),
+		blocks:           objstore.OpenFilesystem(dataDir, "blocks"),
+		events:           newEventQueue(),
+		stagedImportRoot: filepath.Join(dataDir, "..", "staged-import"),
 	}
 }
 

@@ -15,7 +15,7 @@ func TestMoveRepoToTrashRollsBackQueueAndBranch(t *testing.T) {
 		t.Fatal(rpcErr)
 	}
 	repoID := id.(string)
-	fileHandlers, closeMoves := reader.FileWriteRPCHandlers(ctx, db, nil, false, nil, NewRepoPasswords(reader), FileMoveLimits{})
+	fileHandlers, closeMoves := reader.FileWriteRPCHandlers(ctx, db, nil, false, nil, nil, FileMoveLimits{})
 	defer closeMoves()
 	if _, rpcErr := fileHandlers["seafile_post_empty_file"](ctx, fileWriteRPCArgs(t, repoID, "/", "file", owner)); rpcErr != nil {
 		t.Fatal(rpcErr)

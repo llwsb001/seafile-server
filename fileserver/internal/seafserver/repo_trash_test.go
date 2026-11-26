@@ -60,3 +60,52 @@ func TestMoveRepoToTrashRollsBackQueueAndBranch(t *testing.T) {
 		t.Fatalf("deleted library's head became unreadable: %v", err)
 	}
 }
+
+func TestRestoreRepoFromTrashRollsBackAndCanBeRetried(t *testing.T) {
+	ctx := context.Background()
+	db, dir := openFileWriteFixture(t)
+	reader := NewReader(db, dir)
+	id, rpcErr := reader.createRepo(ctx, db, fileWriteRPCArgs(t, "restore", "fixture", "owner@example.test"))
+	if rpcErr != nil {
+		t.Fatal(rpcErr)
+	}
+	repoID := id.(string)
+	repo, err := reader.Repo(ctx, repoID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handlers := reader.RepoTrashWriteRPCHandlers(db, false)
+	args := fileWriteRPCArgs(t, repoID)
+	if _, rpcErr := handlers["seafile_destroy_repo"](ctx, args); rpcErr != nil {
+		t.Fatal(rpcErr)
+	}
+	if _, err := db.Exec(`CREATE TRIGGER fail_restore BEFORE DELETE ON RepoTrash
+		BEGIN SELECT RAISE(ABORT, 'fixture restore failure'); END`); err != nil {
+		t.Fatal(err)
+	}
+	restore := handlers["restore_repo_from_trash"]
+	if _, rpcErr := restore(ctx, args); rpcErr == nil {
+		t.Fatal("metadata failure unexpectedly committed the restore")
+	}
+	var published int
+	err = db.QueryRow(`SELECT (SELECT COUNT(*) FROM Repo WHERE repo_id = ?) +
+		(SELECT COUNT(*) FROM Branch WHERE repo_id = ?)`, repoID, repoID).Scan(&published)
+	if err != nil || published != 0 {
+		t.Fatalf("failed restore left active references: %d, %v", published, err)
+	}
+	var trashHead string
+	err = db.QueryRow("SELECT head_id FROM RepoTrash WHERE repo_id = ?", repoID).Scan(&trashHead)
+	if err != nil || trashHead != repo.HeadCommitID {
+		t.Fatalf("failed restore lost trash reference: %s, %v", trashHead, err)
+	}
+	if _, err := db.Exec("DROP TRIGGER fail_restore"); err != nil {
+		t.Fatal(err)
+	}
+	if result, rpcErr := restore(ctx, args); rpcErr != nil || result != 0 {
+		t.Fatalf("restore retry: %v, %v", result, rpcErr)
+	}
+	restored, err := reader.Repo(ctx, repoID)
+	if err != nil || restored.HeadCommitID != repo.HeadCommitID {
+		t.Fatalf("retry did not recover the original head: %v, %v", restored, err)
+	}
+}

@@ -18,47 +18,72 @@ import (
 var legacyRepoSalt = [8]byte{0xda, 0x90, 0x45, 0xc3, 0x06, 0xc7, 0xcc, 0x26}
 
 func unlockRepo(repo *repomgr.Repo, password string) (key, iv []byte, ok bool) {
-	version := repo.EncVersion
-	salt := legacyRepoSalt[:]
-	if version >= 3 {
-		var err error
-		salt, err = hex.DecodeString(repo.Salt)
-		if err != nil || len(salt) != 32 {
-			return nil, nil, false
-		}
-	}
-
-	credential := []byte(repo.ID + password)
-	if repo.PwdHashAlgo == "" {
-		magic, _ := deriveRepoKey(version, salt, credential)
-		if !matchesHex(magic, repo.Magic) {
-			return nil, nil, false
-		}
-	} else {
-		// The legacy password hash pads its eight-byte salt with zero bytes.
-		var hashSalt [32]byte
-		copy(hashSalt[:], salt)
-		hash := deriveRepoPasswordHash(repo.PwdHashAlgo, repo.PwdHashParams, hashSalt[:], credential)
-		if hash == nil || !matchesHex(hash, repo.PwdHash) {
-			return nil, nil, false
-		}
-	}
-
-	key, iv = deriveRepoKey(version, salt, []byte(password))
-	if version == 1 {
-		return key, iv, true
-	}
-	wrapped, err := hex.DecodeString(repo.RandomKey)
-	if err != nil || len(wrapped) != 48 {
+	salt := repoKeySalt(repo)
+	if salt == nil || !verifyRepoPassword(repo, salt, password) {
 		return nil, nil, false
 	}
-	secret, err := repocrypt.Decrypt(version, key, iv, wrapped)
-	if err != nil || len(secret) != 32 {
+	if repo.EncVersion == 1 {
+		key, iv = deriveRepoKey(repo.EncVersion, salt, []byte(password))
+		return key, iv, true
+	}
+	secret := unwrapRepoSecret(repo, salt, password)
+	if secret == nil {
 		return nil, nil, false
 	}
 	defer clear(secret)
-	key, iv = deriveRepoKey(version, salt, secret)
+	key, iv = deriveRepoKey(repo.EncVersion, salt, secret)
 	return key, iv, true
+}
+
+func repoKeySalt(repo *repomgr.Repo) []byte {
+	if repo.EncVersion < 3 {
+		return legacyRepoSalt[:]
+	}
+	salt, err := hex.DecodeString(repo.Salt)
+	if err != nil || len(salt) != 32 {
+		return nil
+	}
+	return salt
+}
+
+func repoPasswordVerifier(version int, salt []byte, id, password, algo, params string) []byte {
+	credential := []byte(id + password)
+	defer clear(credential)
+	if algo != "" {
+		// The legacy password hash pads its eight-byte salt with zero bytes.
+		var hashSalt [32]byte
+		copy(hashSalt[:], salt)
+		return deriveRepoPasswordHash(algo, params, hashSalt[:], credential)
+	}
+	magic, iv := deriveRepoKey(version, salt, credential)
+	clear(iv)
+	return magic
+}
+
+func verifyRepoPassword(repo *repomgr.Repo, salt []byte, password string) bool {
+	expected := repo.Magic
+	if repo.PwdHashAlgo != "" {
+		expected = repo.PwdHash
+	}
+	verifier := repoPasswordVerifier(repo.EncVersion, salt, repo.ID, password, repo.PwdHashAlgo, repo.PwdHashParams)
+	defer clear(verifier)
+	return verifier != nil && matchesHex(verifier, expected)
+}
+
+func unwrapRepoSecret(repo *repomgr.Repo, salt []byte, password string) []byte {
+	wrapped, err := hex.DecodeString(repo.RandomKey)
+	if err != nil || len(wrapped) != 48 {
+		return nil
+	}
+	key, iv := deriveRepoKey(repo.EncVersion, salt, []byte(password))
+	defer clear(key)
+	defer clear(iv)
+	secret, err := repocrypt.Decrypt(repo.EncVersion, key, iv, wrapped)
+	if err != nil || len(secret) != 32 {
+		clear(secret)
+		return nil
+	}
+	return secret
 }
 
 func matchesHex(raw []byte, hexValue string) bool {

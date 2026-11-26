@@ -225,4 +225,56 @@ func TestSQLiteBranchPublication(t *testing.T) {
 		t.Fatal("no branch update succeeded")
 	}
 	check(winner.CommitID, winner.RepoName)
+	takeEvent("") // The competing publications used the direct SQLite storage API.
+
+	rotated := commitmgr.NewCanonicalCommit(repo, winner.CommitID, next.RootID, next.CreatorName, "Changed library password", 301)
+	rotated.RepoName, rotated.Version, rotated.Encrypted, rotated.EncVersion = winner.RepoName, 1, "true", 3
+	rotated.Magic = strings.Repeat("3", 64)
+	rotated.RandomKey = strings.Repeat("4", 96)
+	rotated.Salt = strings.Repeat("5", 64)
+	if err := commitmgr.Save(rotated); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := updateBranch(repo, repo, rotated.CommitID, winner.CommitID, "", false, ""); err != nil {
+		t.Fatal(err)
+	}
+	takeEvent(rotated.CommitID)
+
+	client := commitmgr.NewCanonicalCommit(repo, rotated.CommitID, strings.Repeat("6", 40), rotated.CreatorName, "File upload", 302)
+	client.RepoName, client.Version, client.Encrypted, client.EncVersion = rotated.RepoName, 1, "true", 3
+	client.Magic = strings.Repeat("1", 64)
+	client.RandomKey = strings.Repeat("2", 96)
+	client.Salt = rotated.Salt
+	if err := commitmgr.Save(client); err != nil {
+		t.Fatal(err)
+	}
+	var accepted string
+	for range 2 {
+		current := repomgr.Get(repo)
+		if current == nil {
+			t.Fatal("failed to reload rotated repository")
+		}
+		var id string
+		if retry, err := genCommitNeedRetry(current, rotated, client, client.RootID, client.CreatorName, true, &id, "", false); retry || err != nil {
+			t.Fatalf("upload with stale encryption metadata: retry %v, error %v", retry, err)
+		}
+		if accepted != "" {
+			if id != accepted {
+				t.Fatal("retry did not reuse the credential-preserving merge")
+			}
+			takeEvent("")
+			continue
+		}
+		accepted = id
+		takeEvent(client.CommitID)
+		takeEvent(accepted)
+	}
+	merged, err := commitmgr.Load(repo, accepted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if merged.RootID != client.RootID || merged.ParentID.String != rotated.CommitID ||
+		merged.SecondParentID.String != client.CommitID || !sameCommitEncryption(rotated, merged) {
+		t.Fatal("merge did not preserve both the client's files and the current credentials")
+	}
 }

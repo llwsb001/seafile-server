@@ -29,6 +29,9 @@ const (
 // RPCHandlers exposes the repository reads using the existing Searpc names.
 func (r *Reader) RPCHandlers(config *ServerConfig) map[string]searpc.Handler {
 	return map[string]searpc.Handler{
+		"seafile_get_shared_users_for_subdir":  r.sharedUsersForSubdir,
+		"seafile_get_shared_groups_for_subdir": r.sharedGroupsForSubdir,
+
 		"seafile_get_repo":            r.getRepo,
 		"seafile_get_commit":          r.getCommit,
 		"seafile_get_commit_list":     r.commitList(config),

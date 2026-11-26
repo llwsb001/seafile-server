@@ -54,11 +54,15 @@ func (r *Reader) RPCHandlers(config *ServerConfig) map[string]searpc.Handler {
 		"seafile_get_file_id_by_commit_and_path": r.fileIDByCommitAndPath,
 		"seafile_get_dir_id_by_commit_and_path":  r.dirIDByCommitAndPath,
 
-		"seafile_list_share_repos":          r.listShareRepos,
-		"seafile_list_repo_shared_to":       r.listRepoSharedTo,
-		"get_shared_users_by_repo":          r.sharedUsersByRepo,
-		"org_get_shared_users_by_repo":      r.orgSharedUsersByRepo,
-		"get_shared_repo_by_path":           r.personalSharedRepoByPath,
+		"seafile_list_share_repos":     r.listShareRepos,
+		"seafile_list_repo_shared_to":  r.listRepoSharedTo,
+		"get_shared_users_by_repo":     r.sharedUsersByRepo,
+		"org_get_shared_users_by_repo": r.orgSharedUsersByRepo,
+		"get_shared_repo_by_path":      r.personalSharedRepoByPath,
+
+		"seafile_get_shared_users_for_subdir":  r.sharedUsersForSubdir,
+		"seafile_get_shared_groups_for_subdir": r.sharedGroupsForSubdir,
+
 		"seafile_list_repo_shared_group":    r.listRepoSharedGroup,
 		"seafile_get_shared_groups_by_repo": r.sharedGroupsByRepo,
 		"seafile_get_group_repoids":         r.groupRepoIDs,

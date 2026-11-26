@@ -90,13 +90,15 @@ func (r *Reader) listRepoSharedGroup(ctx context.Context, args []json.RawMessage
 	}
 	const query = `SELECT repo_id, CAST(COALESCE(group_id, 0) AS INTEGER), permission FROM RepoGroup
 WHERE user_name = ? AND repo_id = ? ORDER BY rowid DESC`
-	return readShareRows(ctx, r.db, "Failed to list repo shared group from db", query, func(row *sql.Rows) (sharedGroup, error) {
-		var group sharedGroup
-		var groupID int64
-		err := row.Scan(&group.RepoID, &groupID, &group.Perm)
-		group.GroupID = int32(groupID)
-		return group, err
-	}, owner, id)
+	return readShareRows(ctx, r.db, "Failed to list repo shared group from db", query, scanSharedGroup, owner, id)
+}
+
+func scanSharedGroup(row *sql.Rows) (sharedGroup, error) {
+	var group sharedGroup
+	var groupID int64
+	err := row.Scan(&group.RepoID, &groupID, &group.Perm)
+	group.GroupID = int32(groupID)
+	return group, err
 }
 
 func (r *Reader) sharedGroupsByRepo(ctx context.Context, args []json.RawMessage) (any, *searpc.RPCError) {

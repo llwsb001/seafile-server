@@ -141,6 +141,7 @@ func run(ctx context.Context, args []string) error {
 		maps.Copy(handlers, reader.SyncTokenRPCHandlers(writer))
 		maps.Copy(handlers, reader.HistoryRPCHandlers(writer))
 		maps.Copy(handlers, reader.RepoCreationRPCHandlers(writer))
+		maps.Copy(handlers, reader.RepoGovernanceRPCHandlers(writer))
 		maps.Copy(handlers, reader.RepoTrashWriteRPCHandlers(writer, cloudMode))
 		stopTrashExpiry := reader.StartRepoTrashExpiry(ctx, writer, serverConfig)
 		defer stopTrashExpiry()

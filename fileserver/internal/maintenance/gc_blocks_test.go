@@ -88,7 +88,7 @@ func TestGCBlocksCommitBoundaryBeforeDeletionAndCanRetry(t *testing.T) {
 			if removed != wantRemoved {
 				t.Fatalf("removed %d blocks, want %d", removed, wantRemoved)
 			}
-			store := Store{dataDir: root}
+			store := Store{objectStores: &objectStores{dataDir: root}}
 			remaining, err := store.objectIDs("blocks", repoID)
 			if err != nil || len(remaining) != 2-wantRemoved {
 				t.Fatalf("remaining blocks %v, error %v", remaining, err)

@@ -19,7 +19,7 @@ func TestFileRestoreWithNewParentsPublishesAtomically(t *testing.T) {
 		t.Fatal(rpcErr)
 	}
 	repoID := id.(string)
-	handlers, closeMoves := reader.FileWriteRPCHandlers(ctx, db, nil, false, nil, FileMoveLimits{})
+	handlers, closeMoves := reader.FileWriteRPCHandlers(ctx, db, nil, false, nil, nil, FileMoveLimits{})
 	defer closeMoves()
 	call := func(method string, values ...string) (any, *searpc.RPCError) {
 		return handlers[method](ctx, fileWriteRPCArgs(t, values...))

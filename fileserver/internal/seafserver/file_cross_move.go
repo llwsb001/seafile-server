@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"slices"
 	"strings"
 
 	"github.com/haiwen/seafile-server/fileserver/fsmgr"
@@ -62,16 +63,18 @@ func (w *fileWriter) moveBetweenLibraries(ctx context.Context, values []string, 
 		seen[name] = true
 	}
 	move.replace = intArgument(args, 6) > 0
-	if intArgument(args, 9) == 0 {
-		if _, rpcErr := w.moveTrees(ctx, move); rpcErr != nil {
-			return nil, rpcErr
-		}
+	trees, rpcErr := w.moveTrees(ctx, move)
+	if rpcErr != nil {
+		return nil, rpcErr
+	}
+	direct := linkedTransfer(trees[0], trees[1])
+	if !direct && intArgument(args, 9) == 0 {
 		return w.moves.submit(intArgument(args, 8) != 0, func(ctx context.Context, task *fileMoveTask) *searpc.RPCError {
 			return w.runCrossMove(ctx, move, task)
 		})
 	}
 	if rpcErr := w.runCrossMove(ctx, move, nil); rpcErr != nil {
-		if rpcErr.Code == errGeneral {
+		if !direct && rpcErr.Code == errGeneral {
 			return nil, rpcError(errGeneral, "Failed to move")
 		}
 		return nil, rpcErr
@@ -82,11 +85,20 @@ func (w *fileWriter) moveBetweenLibraries(ctx context.Context, values []string, 
 func (w *fileWriter) moveTrees(ctx context.Context, move libraryTransfer) ([2]*fileTree, *searpc.RPCError) {
 	var trees [2]*fileTree
 	for i, repoID := range []string{move.fromRepo, move.toRepo} {
-		tree, rpcErr := w.writableTree(ctx, repoID, move.user, false)
+		tree, rpcErr := w.writableTree(ctx, repoID, move.user, true)
 		if rpcErr != nil {
 			return trees, rpcErr
 		}
 		trees[i] = tree
+	}
+	from, to := trees[0], trees[1]
+	if move.replace && from.repo.StoreID == to.repo.StoreID &&
+		slices.Equal(originPath(from, move.fromPath), originPath(to, move.toPath)) {
+		for _, target := range move.targets {
+			if slices.Contains(move.names, target) {
+				return trees, rpcError(errBadArgs, "Move would overwrite a source entry")
+			}
+		}
 	}
 	return trees, nil
 }
@@ -98,7 +110,12 @@ func (w *fileWriter) runCrossMove(ctx context.Context, move libraryTransfer, tas
 			return rpcErr
 		}
 		from, to := trees[0], trees[1]
-		toDesc, rpcErr := w.copyAcrossLibraries(ctx, from, to, move, task)
+		var toDesc string
+		if linkedTransfer(from, to) {
+			toDesc, rpcErr = insertLinkedTransfer(from, to, move, "move")
+		} else {
+			toDesc, rpcErr = w.copyAcrossLibraries(ctx, from, to, move, task)
+		}
 		if rpcErr != nil {
 			return rpcErr
 		}

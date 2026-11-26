@@ -101,6 +101,19 @@ func TestPostMultiFilesCommitsEverySourceInOrder(t *testing.T) {
 		replaced[0] != files[0] || replaced[1] != (importedFile{Name: "same.txt", ID: files[1].ID, Size: files[1].Size}) {
 		t.Fatalf("ordered overwrite changed the result contract: %v, %v", result, err)
 	}
+	if _, err := db.Exec(`INSERT INTO UserQuota (user, quota) VALUES (?, 2)`, owner); err != nil {
+		t.Fatal(err)
+	}
+	if _, rpcErr := post(ctx, args(names[:1], staged[:1], true)); rpcErr != nil {
+		t.Fatalf("a replacement that shrinks the file should not consume quota: %v", rpcErr)
+	}
+	afterShrink := current()
+	if _, rpcErr := post(ctx, args([]string{"new.txt"}, staged[:1], false)); rpcErr == nil || rpcErr.Code != 519 || current() != afterShrink {
+		t.Fatalf("batch unexpectedly published beyond quota: %v", rpcErr)
+	}
+	if _, err := db.Exec(`DELETE FROM UserQuota WHERE user = ?`, owner); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := db.Exec(`CREATE TRIGGER refuse_batch BEFORE UPDATE ON GoFileWriteQueue
 		BEGIN SELECT RAISE(ABORT, 'fixture queue unavailable'); END`); err != nil {
 		t.Fatal(err)

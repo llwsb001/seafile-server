@@ -145,11 +145,15 @@ func (w *fileWriter) importStagedFiles(ctx context.Context, repoID, user string,
 				return nil, rpcErr
 			}
 		}
-		if total > 0 && w.quota.check(ctx, repoID, total) != 0 {
-			return nil, rpcError(519, "Quota is full")
-		}
 		var results []importedFile
 		rpcErr = tree.change(parents, true, func(dir *fsmgr.SeafDir) (bool, *searpc.RPCError) {
+			delta := total
+			if replace {
+				delta = replacementImportDelta(dir.Entries, files, total)
+			}
+			if delta > 0 && w.quota.check(ctx, repoID, delta) != 0 {
+				return false, rpcError(519, "Quota is full")
+			}
 			var err *searpc.RPCError
 			results, err = w.applyImports(ctx, tree, dir, files, replace)
 			return err == nil, err
@@ -178,6 +182,23 @@ func (w *fileWriter) importStagedFiles(ctx context.Context, repoID, user string,
 		return results, nil
 	}
 	return nil, rpcError(520, "Concurrent upload")
+}
+
+func replacementImportDelta(entries []*fsmgr.SeafDirent, files []fileImport, total int64) int64 {
+	seen := make(map[string]bool, len(files))
+	for i := len(files) - 1; i >= 0; i-- {
+		file := files[i]
+		if seen[file.name] {
+			// Only the last replacement of each name survives publication.
+			total = max(0, total-file.source.stat.Size)
+			continue
+		}
+		seen[file.name] = true
+		if index := findEntry(entries, file.name); index >= 0 && fsmgr.IsRegular(entries[index].Mode) {
+			total = max(0, total-max(0, entries[index].Size))
+		}
+	}
+	return total
 }
 
 func (w *fileWriter) applyImports(ctx context.Context, tree *fileTree, dir *fsmgr.SeafDir, files []fileImport,

@@ -86,6 +86,17 @@ make -C "$SEAFILE_COMPAT_TESTS" test-sqlite-maintenance \
   SEAFILE_TARGET_FSCK_BIN="$SEAFILE_TARGET_FSCK_BIN" SEAFILE_TARGET_GC_BIN="$SEAFILE_TARGET_GC_BIN"
 ```
 
+### 运行 Go `seaf-fsck` 检查
+
+从仓库根目录构建，并对已停止写入的 Linux SQLite 数据或其副本运行。存在 SQLite WAL 或回滚日志时，命令先把数据库及日志复制到临时目录，再在副本中完成 SQLite 恢复和查询。
+
+```sh
+go -C fileserver build -o "$SEAFILE_TARGET_FSCK_BIN" ./cmd/seaffsck
+"$SEAFILE_TARGET_FSCK_BIN" -F "$CENTRAL_CONFIG_DIR" -d "$SEAFILE_DATA_DIR" --threads 2
+```
+
+默认校验所选库当前文件树的 FS 对象和块哈希。`-s` 保留 FS 校验，块只检查是否存在。`-S` 对比目录项记录的大小和文件对象大小。`-i` 按库 ID 前缀选择，传入前缀时以该选择为准。日志报告库内损坏和可用的旧提交，命令仍返回 `0`，沿用 C 的行为。用 `SCENARIO_SET=fsck-check` 复跑只读检查。
+
 ### 分阶段检查同一数据
 
 1. **准备和冻结。** 为 C/C、C/Go 分别复制 SQLite 与对象目录。加入普通、加密、虚拟、回收站库存量，以及合并提交、旧历史、空文件、大文件和孤立对象。人为缺失、损坏和故障注入各用独立副本。记录 SHA-256、对象 ID、角色、时间边界和预期引用。

@@ -3,22 +3,28 @@ package seafserver
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
 )
 
 func TestCreateRepoPublicationsAreAtomic(t *testing.T) {
+	t.Run("ordinary", func(t *testing.T) {
+		testCreateRepoPublicationsAreAtomic(t, nil, false)
+	})
+	t.Run("encrypted", func(t *testing.T) {
+		testCreateRepoPublicationsAreAtomic(t, createEncryptionPassword, true)
+	})
+}
+
+func testCreateRepoPublicationsAreAtomic(t *testing.T, password any, wantEncrypted bool) {
+	t.Helper()
 	ctx := context.Background()
 	schema, err := os.ReadFile("../../../scripts/sql/sqlite/seafile.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
-	args := []json.RawMessage{
-		json.RawMessage(`"new library"`), json.RawMessage(`"description"`),
-		json.RawMessage(`"owner@example.test"`), json.RawMessage("null"), json.RawMessage("2"),
-	}
+	args := governanceArgs(t, "new library", "description", "owner@example.test", password, 2, nil, nil)
 	for _, failure := range []string{"object-write", "db-commit"} {
 		t.Run(failure, func(t *testing.T) {
 			root := t.TempDir()
@@ -86,8 +92,8 @@ func TestCreateRepoPublicationsAreAtomic(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if repo.Name != "new library" || repo.RootID != emptyObjectID {
-				t.Fatalf("unexpected repository after retry: %q / %q", repo.Name, repo.RootID)
+			if repo.Name != "new library" || repo.RootID != emptyObjectID || repo.IsEncrypted != wantEncrypted {
+				t.Fatal("unexpected repository after retry")
 			}
 			if got := state(); got != [6]int{1, 1, 1, 1, 1, 0} {
 				t.Fatalf("retry published unexpected rows: %v", got)

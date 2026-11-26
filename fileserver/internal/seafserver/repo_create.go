@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -34,8 +35,13 @@ func (r *Reader) createRepo(ctx context.Context, db *sql.DB, args []json.RawMess
 	if name == nil || description == nil || owner == nil {
 		return nil, rpcError(errBadArgs, "Argument should not be null")
 	}
-	password := stringArgument(args, 3)
-	if password != nil && (*password != "" || intArgument(args, 4) != -1 || stringArgument(args, 5) != nil) {
+	var password *string
+	if len(args) > 3 {
+		if err := json.Unmarshal(args[3], &password); err != nil {
+			return nil, rpcError(errBadArgs, "Invalid password")
+		}
+	}
+	if password != nil && *password == "" && (intArgument(args, 4) != -1 || stringArgument(args, 5) != nil) {
 		return nil, rpcError(errBadArgs, "Unsupported encryption version")
 	}
 
@@ -44,6 +50,14 @@ func (r *Reader) createRepo(ctx context.Context, db *sql.DB, args []json.RawMess
 		return nil, rpcError(errGeneral, "Failed to generate repo id")
 	}
 	commit := newInitialRepoCommit(repoID.String(), emptyObjectID, *name, *description, "Created library", *owner, initialRepoVersion, time.Now().Unix())
+	if password != nil && *password != "" {
+		if strings.ContainsRune(*password, 0) {
+			return nil, rpcError(errBadArgs, "Invalid password")
+		}
+		if rpcErr := setGeneratedRepoEncryption(commit, *password, args); rpcErr != nil {
+			return nil, rpcErr
+		}
+	}
 	if err := r.writeInitialRepoCommit(commit); err != nil {
 		log.Printf("create repo: write initial commit: %v", err)
 		return nil, rpcError(errGeneral, "Failed to add commit")

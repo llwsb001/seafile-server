@@ -43,6 +43,7 @@ func (r *Reader) RPCHandlers(config *ServerConfig) map[string]searpc.Handler {
 		"seafile_get_repo_owner":      r.getRepoOwner,
 		"seafile_is_repo_owner":       r.isRepoOwner,
 		"seafile_list_owned_repos":    r.listOwnedRepos,
+		"get_virtual_repo":            r.getVirtualRepo,
 		"get_repo_status":             r.getRepoStatus,
 		"get_repo_history_limit":      r.getRepoHistoryLimit(config),
 		"get_file_count_info_by_path": r.fileCountInfoByPath,
@@ -69,8 +70,6 @@ func (r *Reader) RPCHandlers(config *ServerConfig) map[string]searpc.Handler {
 		"list_inner_pub_repos_by_owner":     r.listInnerPublicReposByOwner,
 		"count_inner_pub_repos":             r.countInnerPublicRepos,
 		"is_inner_pub_repo":                 r.isInnerPublicRepo,
-
-		"get_virtual_repo": r.getVirtualRepo,
 	}
 }
 

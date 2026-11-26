@@ -48,6 +48,8 @@ SQLite 发行回放后的探针排查、Go 持续负载和签收条件见 [SQLit
 
 稳定性验收后，管理后台、权限浏览、搜索、加密库、文件导入及运维的后续交付见 [SQLite 下一阶段功能计划](go-migration-sqlite-functional-coverage.md)。
 
+v10 后的虚拟库维护、加密库、默认模板及普通用户搜索见 [SQLite 剩余兼容项计划](go-migration-sqlite-remaining-compat.md)。
+
 ## 写入切换与回退
 
 1. 灰度前，演练一次从一致的数据库和存储快照启动 C，再切到 Go 写入，最后用同一份数据启动 C。验证历史、权限、文件内容和新写入。

@@ -45,6 +45,7 @@ func (r *Reader) FileWriteRPCHandlers(ctx context.Context, db *sql.DB, identity 
 		quota:       quota, moves: newFileMoveQueue(ctx), limits: limits,
 	}
 	return map[string]searpc.Handler{
+		"seafile_revert_on_server":   writer.revertRepo,
 		"seafile_post_empty_file":    writer.edit(4, createFileEntry(false)),
 		"seafile_post_dir":           writer.edit(4, createFileEntry(true)),
 		"seafile_mkdir_with_parents": writer.edit(4, mkdirWithParents),

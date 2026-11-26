@@ -3,6 +3,7 @@
 
 import argparse
 from contextlib import closing, contextmanager
+import ctypes
 import errno
 import fcntl
 from hashlib import sha256
@@ -254,14 +255,20 @@ def restore_instance(archive, instance, expected_sha256):
     with TemporaryDirectory(prefix="sqlite-restore-", dir=instance.parent) as directory:
         staged = Path(directory)
         extract_archive(archive, staged)
-        # This mkdir reserves a previously absent destination for the atomic rename below.
-        instance.mkdir(mode=0o700)
-        try:
-            staged.replace(instance)
-        except OSError:
-            instance.rmdir()
-            raise
+        publish_restored_directory(staged, instance)
     print(f"已验证并恢复 SQLite 实例至 {instance}")
+
+
+def publish_restored_directory(staged, instance):
+    # Publish the complete tree atomically, including when another restore wins the same path.
+    at_fdcwd = -100
+    rename_noreplace = 1
+    rename = ctypes.CDLL(None, use_errno=True).renameat2
+    rename.argtypes = (ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint)
+    rename.restype = ctypes.c_int
+    if rename(at_fdcwd, os.fsencode(staged), at_fdcwd, os.fsencode(instance), rename_noreplace) != 0:
+        error = ctypes.get_errno()
+        raise OSError(error, os.strerror(error), str(instance))
 
 
 def destination(value):

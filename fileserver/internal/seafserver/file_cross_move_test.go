@@ -43,7 +43,7 @@ func TestCrossLibraryMovePublishesBothHeadsOrNeither(t *testing.T) {
 		return repo.HeadCommitID
 	}
 	writer := &fileWriter{reader: reader, db: db, permissions: &permissionReader{db: db}, quota: NewUserQuota(db, config)}
-	req := crossLibraryMove{fromRepo: source, toRepo: target, user: owner,
+	req := libraryTransfer{fromRepo: source, toRepo: target, user: owner,
 		names: []string{"transfer.txt"}, targets: []string{"transfer.txt"}}
 	denied := req
 	denied.toRepo = readOnly

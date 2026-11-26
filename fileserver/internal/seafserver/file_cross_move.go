@@ -20,7 +20,7 @@ type FileMoveLimits struct {
 	MaxBytes int64
 }
 
-type crossLibraryMove struct {
+type libraryTransfer struct {
 	fromRepo, toRepo string
 	user             string
 	fromPath, toPath []string
@@ -28,32 +28,40 @@ type crossLibraryMove struct {
 	replace          bool
 }
 
-func (w *fileWriter) moveBetweenLibraries(ctx context.Context, values []string, user string, args []json.RawMessage) (any, *searpc.RPCError) {
+func parseLibraryTransfer(values []string, user string) (libraryTransfer, *searpc.RPCError) {
 	from, rpcErr := fileWritePath(values[1])
 	if rpcErr != nil {
-		return nil, rpcErr
+		return libraryTransfer{}, rpcErr
 	}
 	to, rpcErr := fileWritePath(values[4])
 	if rpcErr != nil {
-		return nil, rpcErr
+		return libraryTransfer{}, rpcErr
 	}
 	names, validSource := fileNames(values[2])
 	targets, validTarget := fileNames(values[5])
 	if !validSource || !validTarget {
-		return nil, rpcError(errBadArgs, "Load filenames to json failed")
+		return libraryTransfer{}, rpcError(errBadArgs, "Load filenames to json failed")
 	}
 	if len(names) != len(targets) {
-		return nil, rpcError(errBadArgs, "The number of files in the parameters does not match")
+		return libraryTransfer{}, rpcError(errBadArgs, "The number of files in the parameters does not match")
 	}
-	seen := make(map[string]bool, len(names))
-	for _, name := range names {
+	return libraryTransfer{fromRepo: values[0], toRepo: values[3], user: user,
+		fromPath: from, toPath: to, names: names, targets: targets}, nil
+}
+
+func (w *fileWriter) moveBetweenLibraries(ctx context.Context, values []string, user string, args []json.RawMessage) (any, *searpc.RPCError) {
+	move, rpcErr := parseLibraryTransfer(values, user)
+	if rpcErr != nil {
+		return nil, rpcErr
+	}
+	seen := make(map[string]bool, len(move.names))
+	for _, name := range move.names {
 		if seen[name] {
 			return nil, rpcError(errBadArgs, "Duplicate source filename")
 		}
 		seen[name] = true
 	}
-	move := crossLibraryMove{fromRepo: values[0], toRepo: values[3], user: user,
-		fromPath: from, toPath: to, names: names, targets: targets, replace: intArgument(args, 6) > 0}
+	move.replace = intArgument(args, 6) > 0
 	if intArgument(args, 9) == 0 {
 		if _, rpcErr := w.moveTrees(ctx, move); rpcErr != nil {
 			return nil, rpcErr
@@ -71,7 +79,7 @@ func (w *fileWriter) moveBetweenLibraries(ctx context.Context, values []string, 
 	return map[string]any{"background": false, "task-id": nil}, nil
 }
 
-func (w *fileWriter) moveTrees(ctx context.Context, move crossLibraryMove) ([2]*fileTree, *searpc.RPCError) {
+func (w *fileWriter) moveTrees(ctx context.Context, move libraryTransfer) ([2]*fileTree, *searpc.RPCError) {
 	var trees [2]*fileTree
 	for i, repoID := range []string{move.fromRepo, move.toRepo} {
 		tree, rpcErr := w.writableTree(ctx, repoID, move.user, false)
@@ -86,7 +94,7 @@ func (w *fileWriter) moveTrees(ctx context.Context, move crossLibraryMove) ([2]*
 	return trees, nil
 }
 
-func (w *fileWriter) runCrossMove(ctx context.Context, move crossLibraryMove, task *fileMoveTask) *searpc.RPCError {
+func (w *fileWriter) runCrossMove(ctx context.Context, move libraryTransfer, task *fileMoveTask) *searpc.RPCError {
 	for range maxFileWriteRetries {
 		trees, rpcErr := w.moveTrees(ctx, move)
 		if rpcErr != nil {
@@ -122,23 +130,12 @@ func (w *fileWriter) publishMove(ctx context.Context, from, to *fileTree, fromDe
 	if err != nil {
 		return err
 	}
-	if task != nil {
-		task.mu.Lock()
-		defer task.mu.Unlock()
-	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	_, err = withSQLiteWrite(ctx, w.db, func(conn *sql.Conn) (bool, error) {
+	return w.publishTransfer(ctx, task, func(conn *sql.Conn) (bool, error) {
 		if _, err := publishFileWrite(ctx, conn, to.repo.HeadCommitID, toCommit); err != nil {
 			return false, err
 		}
 		return publishFileWrite(ctx, conn, from.repo.HeadCommitID, fromCommit)
 	})
-	if err == nil && task != nil {
-		task.finished = true
-	}
-	return err
 }
 
 type libraryCopy struct {
@@ -148,53 +145,61 @@ type libraryCopy struct {
 	limits   FileMoveLimits
 }
 
-func (c *libraryCopy) apply(move crossLibraryMove, quota *UserQuota) (string, string, *searpc.RPCError) {
-	fromDir, rpcErr := c.from.reader.directoryByPath(c.from.repo, c.from.root, strings.Join(move.fromPath, "/"))
+func (c *libraryCopy) apply(move libraryTransfer, quota *UserQuota) (string, string, *searpc.RPCError) {
+	description, rpcErr := c.insert(move, quota)
 	if rpcErr != nil {
-		return "", "", rpcError(errGeneral, "Internal error when copy or move")
-	}
-	if _, rpcErr := c.to.reader.directoryByPath(c.to.repo, c.to.root, strings.Join(move.toPath, "/")); rpcErr != nil {
-		return "", "", rpcError(errGeneral, "Internal error when copy or move")
-	}
-	entries := make([]*fsmgr.SeafDirent, 0, len(move.names))
-	var total copyTotal
-	for _, name := range move.names {
-		index := findEntry(fromDir.Entries, name)
-		if index == -1 {
-			return "", "", rpcError(errGeneral, "Internal error when copy or move")
-		}
-		entry := fromDir.Entries[index]
-		if rpcErr := c.count(entry, &total); rpcErr != nil {
-			return "", "", rpcErr
-		}
-		entries = append(entries, entry)
-	}
-	if quota.check(c.ctx, c.to.repo.ID, total.bytes) != 0 {
-		return "", "", rpcError(errGeneral, "Quota is full")
-	}
-	if c.task != nil {
-		c.task.setTotal(total.files)
-	}
-
-	moved := make([]*fsmgr.SeafDirent, 0, len(entries))
-	for i, entry := range entries {
-		next, rpcErr := c.copyEntry(entry, move.targets[i])
-		if rpcErr != nil {
-			return "", "", rpcErr
-		}
-		moved = append(moved, next)
-	}
-	if rpcErr := c.to.insertMoved(move.toPath, moved, move.replace); rpcErr != nil {
 		return "", "", rpcErr
 	}
 	deleted, rpcErr := c.from.remove(move.fromPath, move.names)
 	if rpcErr != nil {
 		return "", "", rpcErr
 	}
-	return describeDeleted(deleted), describeMoveTarget(move.targets, moved[0].Mode), nil
+	return describeDeleted(deleted), description, nil
 }
 
-func describeMoveTarget(names []string, mode uint32) string {
+func (c *libraryCopy) insert(transfer libraryTransfer, quota *UserQuota) (string, *searpc.RPCError) {
+	fromDir, rpcErr := c.from.reader.directoryByPath(c.from.repo, c.from.root, strings.Join(transfer.fromPath, "/"))
+	if rpcErr != nil {
+		return "", rpcError(errGeneral, "Internal error when copy or move")
+	}
+	if _, rpcErr := c.to.reader.directoryByPath(c.to.repo, c.to.root, strings.Join(transfer.toPath, "/")); rpcErr != nil {
+		return "", rpcError(errGeneral, "Internal error when copy or move")
+	}
+	entries := make([]*fsmgr.SeafDirent, 0, len(transfer.names))
+	var total copyTotal
+	for _, name := range transfer.names {
+		index := findEntry(fromDir.Entries, name)
+		if index == -1 {
+			return "", rpcError(errGeneral, "Internal error when copy or move")
+		}
+		entry := fromDir.Entries[index]
+		if rpcErr := c.count(entry, &total); rpcErr != nil {
+			return "", rpcErr
+		}
+		entries = append(entries, entry)
+	}
+	if quota.check(c.ctx, c.to.repo.ID, total.bytes) != 0 {
+		return "", rpcError(errGeneral, "Quota is full")
+	}
+	if c.task != nil {
+		c.task.setTotal(total.files)
+	}
+
+	copied := make([]*fsmgr.SeafDirent, 0, len(entries))
+	for i, entry := range entries {
+		next, rpcErr := c.copyEntry(entry, transfer.targets[i])
+		if rpcErr != nil {
+			return "", rpcErr
+		}
+		copied = append(copied, next)
+	}
+	if rpcErr := c.to.insertMoved(transfer.toPath, copied, transfer.replace); rpcErr != nil {
+		return "", rpcErr
+	}
+	return describeTransferTarget(transfer.targets, copied[0].Mode), nil
+}
+
+func describeTransferTarget(names []string, mode uint32) string {
 	if len(names) > 1 {
 		return fmt.Sprintf("Added \"%s\" and %d more files", names[0], len(names)-1)
 	}

@@ -39,11 +39,21 @@ func NewReader(db *sql.DB, dataDir string) *Reader {
 
 // OpenSQLiteReadOnly opens an existing Seafile SQLite database.
 func OpenSQLiteReadOnly(ctx context.Context, dbPath string) (*sql.DB, error) {
+	return openSQLiteReadOnly(ctx, dbPath, "mode=ro&"+sqliteBusyTimeout)
+}
+
+// OpenSQLiteImmutable reads a stopped SQLite database with no pending journal.
+// It bypasses locking and does not create WAL sidecars.
+func OpenSQLiteImmutable(ctx context.Context, dbPath string) (*sql.DB, error) {
+	return openSQLiteReadOnly(ctx, dbPath, "mode=ro&immutable=1")
+}
+
+func openSQLiteReadOnly(ctx context.Context, dbPath, options string) (*sql.DB, error) {
 	uri, err := sqliteFileURL(dbPath)
 	if err != nil {
 		return nil, err
 	}
-	uri.RawQuery = "mode=ro&" + sqliteBusyTimeout
+	uri.RawQuery = options
 	db, err := sql.Open("sqlite", uri.String())
 	if err != nil {
 		return nil, err

@@ -51,6 +51,8 @@ func (r *Reader) FileWriteRPCHandlers(ctx context.Context, db *sql.DB, identity 
 		"seafile_del_file":           writer.edit(4, deleteFiles),
 		"seafile_batch_del_files":    writer.edit(3, batchDeleteFiles),
 		"seafile_rename_file":        writer.edit(5, renameFile),
+		"seafile_revert_file":        writer.revertEntry(false),
+		"seafile_revert_dir":         writer.revertEntry(true),
 		"seafile_move_file":          writer.moveFiles,
 		"get_copy_task":              writer.moves.get,
 		"cancel_copy_task":           writer.moves.cancel,
@@ -152,18 +154,26 @@ func (w *fileWriter) publish(ctx context.Context, tree *fileTree, description st
 	if err != nil {
 		return err
 	}
-	_, err = withSQLiteWrite(ctx, w.db, func(conn *sql.Conn) (bool, error) {
-		return publishFileWrite(ctx, conn, tree.repo.HeadCommitID, commit)
+	return w.publishStagedFileWrite(ctx, tree.repo.HeadCommitID, commit)
+}
+
+func (w *fileWriter) publishStagedFileWrite(ctx context.Context, oldHead string, commit *commitmgr.Commit) error {
+	_, err := withSQLiteWrite(ctx, w.db, func(conn *sql.Conn) (bool, error) {
+		return publishFileWrite(ctx, conn, oldHead, commit)
 	})
 	return err
 }
 
 func (w *fileWriter) prepareCommit(tree *fileTree, description string) (*commitmgr.Commit, error) {
-	repo := tree.repo
-	parent, err := w.reader.Commit(repo.ID, repo.HeadCommitID)
+	parent, err := w.reader.Commit(tree.repo.ID, tree.repo.HeadCommitID)
 	if err != nil {
 		return nil, err
 	}
+	return w.prepareCommitAfter(tree, description, parent)
+}
+
+func (w *fileWriter) prepareCommitAfter(tree *fileTree, description string, parent *commitmgr.Commit) (*commitmgr.Commit, error) {
+	repo := tree.repo
 	commit := newInitialRepoCommit(repo.ID, tree.root, repo.Name, repo.Desc, description, tree.user, repo.Version, tree.now)
 	commit.ParentID.SetValid(parent.CommitID)
 	commit.Encrypted, commit.EncVersion = parent.Encrypted, parent.EncVersion

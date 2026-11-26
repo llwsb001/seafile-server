@@ -85,7 +85,7 @@ func run(ctx context.Context, args []string) error {
 	reader := seafserver.NewReader(db, dataDir)
 	serverConfig := seafserver.NewServerConfig(db, confData)
 	handlers := reader.RPCHandlers(serverConfig)
-	maps.Copy(handlers, seafserver.EventRPCHandlers())
+	maps.Copy(handlers, reader.EventRPCHandlers())
 	quota := seafserver.NewUserQuota(db, serverConfig)
 	maps.Copy(handlers, quota.RPCHandlers())
 	var identity *seafserver.Identity

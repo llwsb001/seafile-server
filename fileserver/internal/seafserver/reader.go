@@ -23,6 +23,7 @@ type Reader struct {
 	commits *objstore.ObjectStore
 	fs      *objstore.ObjectStore
 	blocks  *objstore.ObjectStore
+	events  *eventQueue
 }
 
 // NewReader uses an existing database connection and a seafile-data directory.
@@ -32,6 +33,7 @@ func NewReader(db *sql.DB, dataDir string) *Reader {
 		commits: objstore.OpenFilesystem(dataDir, "commits"),
 		fs:      objstore.OpenFilesystem(dataDir, "fs"),
 		blocks:  objstore.OpenFilesystem(dataDir, "blocks"),
+		events:  newEventQueue(),
 	}
 }
 

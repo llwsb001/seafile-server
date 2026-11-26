@@ -53,4 +53,4 @@ arm64 补充运行使用预构建的锁定 Linux 环境及兼容分支 `c78d1527
 
 ## 签收状态
 
-候选 `0f22898` 完成过整套独立验收。审阅后的同归档再次运行时，第二轮一次普通库上传收到成功响应，紧接着 Seahub 取下载链接返回 404。Go 独立稳定性因此重新标为待复验。兼容回归及同数据回退继续使用锁定 C。已记录的 C 持续负载基线仍未完成，C/Go 相对阈值与发行签收保持待通过。 [审阅后的失败回放](https://github.com/llwsb001/seafile-compat-tests/actions/runs/45755022191) · [现有发行门槛](go-migration-sqlite-release-acceptance.md#发行门槛)
+候选 `0f22898` 完成过整套独立验收。审阅后的同归档再次运行时，第二轮普通库上传 `web-23.bin` 收到成功响应，紧接着 Seahub 取下载链接返回 404。同轮 fileserver 曾记录一条处理 SQLite 文件写入队列时的 `SQLITE_BUSY`，两者的关系待确认。Go 独立稳定性因此重新标为待复验。兼容回归及同数据回退继续使用锁定 C。已记录的 C 持续负载基线仍未完成，C/Go 相对阈值与发行签收保持待通过。 [审阅后的失败回放](https://github.com/llwsb001/seafile-compat-tests/actions/runs/45755022191) · [现有发行门槛](go-migration-sqlite-release-acceptance.md#发行门槛)

@@ -55,11 +55,12 @@ func NewRepoPasswords(reader *Reader) *RepoPasswords {
 // RPCHandlers exposes the encrypted repository password and key RPCs.
 func (p *RepoPasswords) RPCHandlers() map[string]searpc.Handler {
 	return map[string]searpc.Handler{
-		"seafile_check_passwd":    p.check,
-		"seafile_set_passwd":      p.set,
-		"seafile_unset_passwd":    p.unset,
-		"seafile_is_passwd_set":   p.isSet,
-		"seafile_get_decrypt_key": p.getKey,
+		"seafile_check_passwd":          p.check,
+		"seafile_set_passwd":            p.set,
+		"seafile_unset_passwd":          p.unset,
+		"seafile_is_passwd_set":         p.isSet,
+		"seafile_get_decrypt_key":       p.getKey,
+		"generate_magic_and_random_key": encryptionBootstrap,
 	}
 }
 

@@ -89,6 +89,7 @@ func copyRepairMetadata(replacement, original *commitmgr.Commit) {
 	replacement.PwdHash = original.PwdHash
 	replacement.PwdHashAlgo = original.PwdHashAlgo
 	replacement.PwdHashParams = original.PwdHashParams
+	replacement.HasPwdHashParams = original.HasPwdHashParams
 }
 
 func (changes repairChanges) description() string {

@@ -291,7 +291,7 @@ func repoObject(repo *repomgr.Repo) map[string]any {
 	object["encrypted"], object["enc-version"], object["magic"] = repo.IsEncrypted, repo.EncVersion, repo.Magic
 	object["pwd-hash"] = repo.PwdHash
 	object["pwd-hash-algo"], object["pwd-hash-params"] = optionalString(repo.PwdHashAlgo), optionalString(repo.PwdHashParams)
-	if repo.PwdHash != "" {
+	if repo.PwdHash != "" && repo.HasPwdHashParams {
 		object["pwd-hash-params"] = repo.PwdHashParams
 	}
 	object["is-corrupted"], object["repaired"] = repo.IsCorrupted, repo.Repaired

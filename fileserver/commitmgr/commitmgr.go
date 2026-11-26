@@ -47,6 +47,8 @@ type Commit struct {
 	Conflict       int    `json:"conflict,omitempty"`
 	NewMerge       int    `json:"new_merge,omitempty"`
 	Repaired       int    `json:"repaired,omitempty"`
+
+	HasPwdHashParams bool `json:"-"`
 }
 
 var store *objstore.ObjectStore
@@ -96,9 +98,15 @@ func computeCommitID(commit *Commit) string {
 
 // FromData reads from p and converts JSON-encoded data to commit.
 func (commit *Commit) FromData(p []byte) error {
-	err := json.Unmarshal(p, commit)
+	object := commitObject{Commit: commit}
+	err := json.Unmarshal(p, &object)
 	if err != nil {
 		return err
+	}
+	commit.HasPwdHashParams = object.PwdHashParams != nil
+	commit.PwdHashParams = ""
+	if commit.HasPwdHashParams {
+		commit.PwdHashParams = *object.PwdHashParams
 	}
 
 	if !utils.IsObjectIDValid(commit.CommitID) {
@@ -145,7 +153,7 @@ type commitObject struct {
 
 func (commit *Commit) object() commitObject {
 	object := commitObject{Commit: commit}
-	if commit.PwdHash != "" {
+	if commit.HasPwdHashParams || commit.PwdHashParams != "" {
 		// The C reader distinguishes an empty algorithm parameter string
 		// from an absent value when deciding if a migration is a no-op.
 		object.PwdHashParams = &commit.PwdHashParams

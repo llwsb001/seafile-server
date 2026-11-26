@@ -31,7 +31,7 @@ func (p *RepoPasswords) upgradeRepoPasswordHash(ctx context.Context, db *sql.DB,
 	}
 
 	return p.mutateRepoCredentials(ctx, db, *id, *user, repoPasswordUpgradeMessage, true, func(repo *repomgr.Repo) (bool, int, *searpc.RPCError) {
-		if repo.PwdHashAlgo == *algo && repo.PwdHashParams == *params {
+		if repo.PwdHashAlgo == *algo && repo.HasPwdHashParams && repo.PwdHashParams == *params {
 			return false, 0, nil
 		}
 		if !repo.IsEncrypted {
@@ -60,6 +60,7 @@ func (p *RepoPasswords) upgradeRepoPasswordHash(ctx context.Context, db *sql.DB,
 		defer clear(verifier)
 		repo.Magic, repo.PwdHash = "", hex.EncodeToString(verifier)
 		repo.PwdHashAlgo, repo.PwdHashParams = *algo, *params
+		repo.HasPwdHashParams = true
 		return true, 0, nil
 	})
 }

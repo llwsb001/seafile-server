@@ -4,10 +4,13 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/haiwen/seafile-server/fileserver/commitmgr"
 )
 
 func TestSQLiteUpgradeRepoPasswordHash(t *testing.T) {
@@ -122,6 +125,59 @@ func TestSQLiteUpgradeRepoPasswordHashRollsBackTokenRevocation(t *testing.T) {
 	after, err := filepath.Glob(filepath.Join(root, "storage", "commits", original.RepoID, "*", "*"))
 	if err != nil || len(after) != len(before) {
 		t.Fatal("failed token revocation stored a new commit")
+	}
+}
+
+func TestSQLitePasswordHashMigrationDistinguishesMissingAndEmptyParams(t *testing.T) {
+	p, db, _, original := seedSQLitePasswordRepo(t, 2)
+	ctx := context.Background()
+	repo, err := p.reader.Repo(ctx, original.RepoID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy, err := p.reader.newRepoMetadataCommit(ctx, repo, original, testVirtualOwner, "Hash with absent parameters")
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy.Magic = ""
+	legacy.PwdHashAlgo = "pbkdf2_sha256"
+	legacy.PwdHash = hex.EncodeToString(repoPasswordVerifier(2, legacyRepoSalt[:], repo.ID, oldSyntheticPassword, legacy.PwdHashAlgo, ""))
+	if err := commitmgr.SaveCanonicalToStore(p.reader.commits, legacy); err != nil {
+		t.Fatal(err)
+	}
+	if advanced, err := PublishSQLiteBranch(ctx, db, original.CommitID, legacy); err != nil || !advanced {
+		t.Fatalf("publish old metadata: %v / %v", advanced, err)
+	}
+	loaded, err := p.reader.Repo(ctx, repo.ID)
+	if err != nil || repoObject(loaded)["pwd-hash-params"] != nil {
+		t.Fatal("absent parameters must remain absent in the repository projection")
+	}
+	upgrade := p.MutationRPCHandlers(db)["seafile_upgrade_repo_pwd_hash_algorithm"]
+	incorrect := governanceArgs(t, repo.ID, testVirtualOwner, "wrong credential", "pbkdf2_sha256", "")
+	if ret, rpcErr := upgrade(ctx, incorrect); ret != 1 || rpcErr == nil || rpcErr.Message != "Incorrect password" {
+		t.Fatal("absent legacy parameters are not the same migration target as explicit empty parameters")
+	}
+	if ret, rpcErr := upgrade(ctx, governanceArgs(t, repo.ID, testVirtualOwner, oldSyntheticPassword, "pbkdf2_sha256", "")); ret != 0 || rpcErr != nil {
+		t.Fatalf("migration to explicit empty parameters = %v / %v", ret, rpcErr)
+	}
+	loaded, err = p.reader.Repo(ctx, repo.ID)
+	if err != nil || repoObject(loaded)["pwd-hash-params"] != "" {
+		t.Fatal("explicit empty parameters must remain strings in the repository projection")
+	}
+	if ret, rpcErr := upgrade(ctx, incorrect); ret != 0 || rpcErr != nil {
+		t.Fatal("repeating the explicitly empty target must remain a no-op")
+	}
+
+	// An old object may contain a parameter string without a password hash.
+	legacy.PwdHash = ""
+	legacy.PwdHashParams = "1000"
+	var payload bytes.Buffer
+	if err := legacy.ToData(&payload); err != nil {
+		t.Fatal(err)
+	}
+	var restored commitmgr.Commit
+	if err := restored.FromData(payload.Bytes()); err != nil || restored.PwdHashParams != "1000" {
+		t.Fatal("existing nonempty parameters were dropped by serialization")
 	}
 }
 

@@ -183,6 +183,7 @@ func (w *fileWriter) prepareCommitAfter(tree *fileTree, description string, pare
 	commit.Encrypted, commit.EncVersion = parent.Encrypted, parent.EncVersion
 	commit.Magic, commit.RandomKey, commit.Salt = parent.Magic, parent.RandomKey, parent.Salt
 	commit.PwdHash, commit.PwdHashAlgo, commit.PwdHashParams = parent.PwdHash, parent.PwdHashAlgo, parent.PwdHashParams
+	commit.HasPwdHashParams = parent.HasPwdHashParams
 	commit.NoLocalHistory, commit.Repaired = parent.NoLocalHistory, parent.Repaired
 	var payload bytes.Buffer
 	if err := commit.ToData(&payload); err != nil {

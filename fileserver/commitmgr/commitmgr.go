@@ -125,7 +125,7 @@ func (commit *Commit) FromData(p []byte) error {
 
 // ToData converts commit to JSON-encoded data and writes to w.
 func (commit *Commit) ToData(w io.Writer) error {
-	jsonstr, err := json.Marshal(commit)
+	jsonstr, err := json.Marshal(commit.object())
 	if err != nil {
 		return err
 	}
@@ -136,6 +136,21 @@ func (commit *Commit) ToData(w io.Writer) error {
 	}
 
 	return nil
+}
+
+type commitObject struct {
+	*Commit
+	PwdHashParams *string `json:"pwd_hash_params,omitempty"`
+}
+
+func (commit *Commit) object() commitObject {
+	object := commitObject{Commit: commit}
+	if commit.PwdHash != "" {
+		// The C reader distinguishes an empty algorithm parameter string
+		// from an absent value when deciding if a migration is a no-op.
+		object.PwdHashParams = &commit.PwdHashParams
+	}
+	return object
 }
 
 // ReadRaw reads data in binary format from storage backend.

@@ -45,11 +45,11 @@ func SaveCanonicalToStore(objects *objstore.ObjectStore, commit *Commit) error {
 	// The hash includes creator_name even when empty. An empty category is null
 	// in a server-generated commit, and an unencrypted commit omits encrypted.
 	object := struct {
-		*Commit
+		commitObject
 		CreatorName  string  `json:"creator_name"`
 		RepoCategory *string `json:"repo_category"`
 		Encrypted    string  `json:"encrypted,omitempty"`
-	}{Commit: commit, CreatorName: commit.CreatorName}
+	}{commitObject: commit.object(), CreatorName: commit.CreatorName}
 	if commit.RepoCategory != "" {
 		object.RepoCategory = &commit.RepoCategory
 	}

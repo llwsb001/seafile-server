@@ -23,6 +23,9 @@ func (p *RepoPasswords) MutationRPCHandlers(db *sql.DB) map[string]searpc.Handle
 		"seafile_change_repo_passwd": func(ctx context.Context, args []json.RawMessage) (any, *searpc.RPCError) {
 			return p.changeRepoPassword(ctx, db, args)
 		},
+		"seafile_upgrade_repo_pwd_hash_algorithm": func(ctx context.Context, args []json.RawMessage) (any, *searpc.RPCError) {
+			return p.upgradeRepoPasswordHash(ctx, db, args)
+		},
 	}
 }
 
@@ -37,7 +40,7 @@ func (p *RepoPasswords) changeRepoPassword(ctx context.Context, db *sql.DB, args
 		return -1, rpcError(errBadArgs, "Invalid repo id")
 	}
 
-	return p.mutateRepoCredentials(ctx, db, *id, *user, repoPasswordChangeMessage, func(repo *repomgr.Repo) (bool, int, *searpc.RPCError) {
+	return p.mutateRepoCredentials(ctx, db, *id, *user, repoPasswordChangeMessage, false, func(repo *repomgr.Repo) (bool, int, *searpc.RPCError) {
 		if !repo.IsEncrypted {
 			return false, -1, rpcError(errBadArgs, "Repo not encrypted")
 		}
@@ -75,7 +78,7 @@ func (p *RepoPasswords) changeRepoPassword(ctx context.Context, db *sql.DB, args
 	})
 }
 
-func (p *RepoPasswords) mutateRepoCredentials(ctx context.Context, db *sql.DB, repoID, user, message string,
+func (p *RepoPasswords) mutateRepoCredentials(ctx context.Context, db *sql.DB, repoID, user, message string, revokeTokens bool,
 	mutate func(*repomgr.Repo) (advanced bool, status int, rpcErr *searpc.RPCError),
 ) (int, *searpc.RPCError) {
 	for range maxFileWriteRetries {
@@ -101,6 +104,11 @@ func (p *RepoPasswords) mutateRepoCredentials(ctx context.Context, db *sql.DB, r
 			published, err := publishSQLiteBranch(ctx, conn, parent.CommitID, commit)
 			if err != nil || !published {
 				return false, err
+			}
+			if revokeTokens {
+				if err := deleteRepoSyncTokens(ctx, conn, repoID); err != nil {
+					return false, err
+				}
 			}
 			err = commitmgr.SaveCanonicalToStore(p.reader.commits, commit)
 			return err == nil, err

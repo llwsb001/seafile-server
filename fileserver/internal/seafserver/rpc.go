@@ -75,6 +75,8 @@ func (r *Reader) RPCHandlers(config *ServerConfig) map[string]searpc.Handler {
 		"list_inner_pub_repos_by_owner":     r.listInnerPublicReposByOwner,
 		"count_inner_pub_repos":             r.countInnerPublicRepos,
 		"is_inner_pub_repo":                 r.isInnerPublicRepo,
+
+		"seafile_is_valid_filename": isValidFilename,
 	}
 }
 

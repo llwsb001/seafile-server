@@ -35,6 +35,8 @@ chmod 0755 "$bin/"*
 install -m 0644 scripts/sql/sqlite/*.sql "$share/sqlite"
 install -m 0644 release/sqlite/config/*.conf "$share/config"
 install -m 0644 LICENSE.txt "$staging"
+install -m 0755 release/sqlite/init.py "$staging"
+install -m 0644 release/sqlite/INIT.md "$staging"
 printf '%s\n' \
     "revision=$revision" \
     "builder_image=$builder_image" \
@@ -47,6 +49,6 @@ printf '%s\n' \
     "build_flags=${build_flags[*]}" > "$staging/BUILD.txt"
 
 cd -- "$staging"
-find BUILD.txt LICENSE.txt seafile -type f -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
+find BUILD.txt INIT.md LICENSE.txt init.py seafile -type f -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
 tar --format=gnu --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner \
-    -cf - BUILD.txt LICENSE.txt SHA256SUMS seafile | gzip -n
+    -cf - BUILD.txt INIT.md LICENSE.txt SHA256SUMS init.py seafile | gzip -n

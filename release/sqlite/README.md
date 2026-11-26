@@ -30,6 +30,7 @@ file "$VERSION_DIR"/seafile/bin/*
 | `seafile/bin/` | `seaf-server-go`、`fileserver`、`seafile-controller`、`seaf-fsck`、`seafserv-gc`、`notification-server` 六个 Linux 可执行文件。 |
 | `seafile/share/sqlite/` | 仓库中的 SQLite 初始化 SQL。 |
 | `seafile/share/config/` | `seafile.conf` 和 `seafdav.conf` 示例。既有实例继续使用自己的配置，运行所需密钥由部署环境提供。 |
+| `seafile/bin/seafile-sqlite` | Linux SQLite 启停、配置预检及离线维护入口。 [启停与回退](SERVICE.md) |
 | `BUILD.txt` | 提交、镜像、Go 版本和构建参数，每行一个 `key=value`。 |
 | `SHA256SUMS` | 归档内文件的相对路径和摘要。 |
 

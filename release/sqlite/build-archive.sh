@@ -22,6 +22,8 @@ trap 'rm -rf -- "$staging"' EXIT
 bin="$staging/seafile/bin"
 share="$staging/seafile/share"
 install -d -m 0755 "$bin" "$share/config" "$share/sqlite"
+install -m 0755 release/sqlite/service.py "$bin/seafile-sqlite"
+install -m 0644 release/sqlite/SERVICE.md "$share"
 
 build_flags=(-mod=readonly -trimpath -buildvcs=false)
 go -C fileserver build "${build_flags[@]}" -o "$bin/seaf-server-go" ./cmd/seafserver

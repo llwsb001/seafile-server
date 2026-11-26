@@ -148,3 +148,43 @@ func TestAdminRepoInventory(t *testing.T) {
 		t.Fatalf("shallow repository row = %+v, next head = %v", got, rows[3]["head-cmmt-id"])
 	}
 }
+
+func TestAdminRepoSearch(t *testing.T) {
+	const (
+		nameSearch = "seafile_search_repos_by_name"
+		idSearch   = "seafile_get_repos_by_id_prefix"
+	)
+	reader := adminRepoFixture(t)
+	for _, test := range []struct {
+		name, method string
+		args         []any
+		want         []string
+	}{
+		{"name ASCII folding", nameSearch, []any{"alPHA"}, []string{adminBroken, adminFirst, adminFirst, adminSecond}},
+		{"name Unicode", nameSearch, []any{"层"}, []string{adminFirst, adminFirst, adminSecond, adminUnicode}},
+		{"name no Unicode folding", nameSearch, []any{"älpha"}, nil},
+		{"name wildcard", nameSearch, []any{"a_PH%"}, []string{adminBroken, adminFirst, adminFirst, adminSecond}},
+		{"name empty", nameSearch, []any{""}, []string{adminBroken, adminFirst, adminFirst, adminSecond, adminUnicode}},
+		{"name unknown", nameSearch, []any{"unknown"}, nil},
+		{"ID unpaged", idSearch, []any{"0323AA00", -1, -1}, []string{adminUnicode, adminSecond, adminFirst, adminFirst, adminBroken, adminStale}},
+		{"ID page", idSearch, []any{"0323aa00", 1, 3}, []string{adminFirst, adminFirst, adminBroken}},
+		{"ID full", idSearch, []any{adminSecond, 0, 1}, []string{adminSecond}},
+		{"ID wildcard", idSearch, []any{"0323aa0_", 0, 1}, []string{adminStale}},
+		{"ID empty", idSearch, []any{"", 0, 1}, []string{adminStale}},
+		{"ID too long", idSearch, []any{"0323aa00-0000-4000-8000-0000000000001", 0, 10}, nil},
+		{"ID past end", idSearch, []any{"0323aa00", 1000, 10}, nil},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			checkAdminRepoIDs(t, listAdminRepoRPC(t, reader, test.method, test.args...), test.want)
+		})
+	}
+	if _, rpcErr := callAdminRepoRPC(t, reader, idSearch, nil, -1, -1); rpcErr == nil ||
+		rpcErr.Code != errBadArgs || rpcErr.Message != "Argument should not be null" {
+		t.Fatalf("null ID prefix error = %v", rpcErr)
+	}
+	names := listAdminRepoRPC(t, reader, nameSearch, "duplicate")
+	identifiers := listAdminRepoRPC(t, reader, idSearch, adminSecond, 0, 1)
+	if names[0]["file-count"] != float64(1) || identifiers[0]["file-count"] != float64(0) {
+		t.Fatalf("file counts from name and ID lookup = %v and %v", names[0]["file-count"], identifiers[0]["file-count"])
+	}
+}

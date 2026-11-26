@@ -137,6 +137,7 @@ func run(ctx context.Context, args []string) error {
 		}
 		defer writer.Close()
 		maps.Copy(handlers, serverConfig.RPCHandlers(writer))
+		maps.Copy(handlers, reader.AdminRepoReadRPCHandlers())
 		maps.Copy(handlers, quota.ManagementRPCHandlers(writer))
 		maps.Copy(handlers, reader.SyncTokenRPCHandlers(writer))
 		maps.Copy(handlers, reader.HistoryRPCHandlers(writer))

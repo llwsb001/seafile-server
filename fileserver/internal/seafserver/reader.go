@@ -39,7 +39,9 @@ func NewReader(db *sql.DB, dataDir string) *Reader {
 
 // OpenSQLiteReadOnly opens an existing Seafile SQLite database.
 func OpenSQLiteReadOnly(ctx context.Context, dbPath string) (*sql.DB, error) {
-	return openSQLiteReadOnly(ctx, dbPath, "mode=ro&"+sqliteBusyTimeout)
+	// A rollback-journal write can briefly exclude readers even after a
+	// preceding upload has committed. Give reads time to see the new head.
+	return openSQLiteReadOnly(ctx, dbPath, "mode=ro&_pragma=busy_timeout(2000)")
 }
 
 // OpenSQLiteImmutable reads a stopped SQLite database with no pending journal.

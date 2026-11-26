@@ -3,6 +3,7 @@ package seafserver
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 
 	"github.com/haiwen/seafile-server/fileserver/commitmgr"
@@ -10,6 +11,8 @@ import (
 	"github.com/haiwen/seafile-server/fileserver/repomgr"
 	"github.com/haiwen/seafile-server/fileserver/searpc"
 	"github.com/haiwen/seafile-server/fileserver/utils"
+	"modernc.org/sqlite"
+	sqlite3 "modernc.org/sqlite/lib"
 )
 
 // RPCService is the service name used by Seahub and the Go fileserver.
@@ -115,6 +118,10 @@ func (r *Reader) getRepo(ctx context.Context, args []json.RawMessage) (any, *sea
 	}
 	repo, err := r.Repo(ctx, *id)
 	if err != nil {
+		var sqliteErr *sqlite.Error
+		if errors.As(err, &sqliteErr) && sqliteErr.Code()&0xff == sqlite3.SQLITE_BUSY {
+			return nil, rpcError(errInternal, "Repository database is busy")
+		}
 		return nil, nil
 	}
 	return repoObject(repo), nil

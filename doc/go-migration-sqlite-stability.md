@@ -2,6 +2,8 @@
 
 先查清验收工具的 SQLite 探针和在线断言是否影响写入，再用已安装的 Go 归档独立跑持续负载。C 源码、构建输入和对拍版本继续锁定在 `fa46d4c43a9a23ff2f70acf92c14e6cb28955664`。兼容对拍和同数据回退继续使用这份 C 基线。 [SQLite 发行计划](go-migration-sqlite-release.md) · [兼容 CI 的 C 版本锁](https://github.com/llwsb001/seafile-compat-tests/blob/a9e6c4220d4aa678754443abb7d061a459de116a/ci/sqlite-fileserver.lock#L3)
 
+探针对照、Go 独立持续负载和当前签收状态见 [SQLite 稳定性验收记录](go-migration-sqlite-stability-acceptance.md)。
+
 ## 起点
 
 | 项目 | 版本与已知结果 |

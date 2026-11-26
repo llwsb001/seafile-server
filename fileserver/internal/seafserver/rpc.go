@@ -78,6 +78,8 @@ func (r *Reader) RPCHandlers(config *ServerConfig) map[string]searpc.Handler {
 		"get_group_repo_owner":              r.groupRepoOwner,
 		"seafile_get_repos_by_group":        r.listReposByGroup,
 		"get_group_repos_by_owner":          r.listGroupReposByOwner,
+		"seafile_list_file_blocks":          r.listFileBlocks,
+		"seafile_check_repo_blocks_missing": r.checkRepoBlocksMissing,
 		"repo_has_been_shared":              r.repoHasBeenShared,
 		"list_inner_pub_repos":              r.listInnerPublicRepos,
 		"list_inner_pub_repos_by_owner":     r.listInnerPublicReposByOwner,

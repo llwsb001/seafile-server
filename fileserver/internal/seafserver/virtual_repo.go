@@ -3,6 +3,7 @@ package seafserver
 import (
 	"context"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"log"
@@ -73,15 +74,22 @@ func (r *Reader) createVirtualRepoInTx(ctx context.Context, conn *sql.Conn, repo
 	if source.Status != repomgr.RepoStatusNormal {
 		return "", rpcError(errGeneral, "Unnormal repo status")
 	}
+	var salt []byte
 	if source.IsEncrypted {
 		if source.EncVersion < 2 {
 			return "", rpcError(errBadArgs, "Library encryption version must be higher than 2")
 		}
+		if source.EncVersion > 4 {
+			return "", rpcError(errBadArgs, "Unsupported encryption version")
+		}
 		if password == "" {
 			return "", rpcError(errBadArgs, "Password is not set")
 		}
-	}
-	if source.IsEncrypted || password != "" {
+		salt = repoKeySalt(source)
+		if salt == nil || !verifyRepoPassword(source, salt, password) {
+			return "", rpcError(errGeneral, "Incorrect password")
+		}
+	} else if password != "" {
 		return "", rpcError(errBadArgs, "Unsupported encryption version")
 	}
 	dir, rpcErr := r.directoryByPath(source, source.RootID, fullPath)
@@ -106,6 +114,19 @@ func (r *Reader) createVirtualRepoInTx(ctx context.Context, conn *sql.Conn, repo
 		return "", rpcError(errGeneral, "Failed to generate repo id")
 	}
 	commit := newInitialRepoCommit(virtualID.String(), dir.DirID, name, description, description, owner, source.Version, time.Now().Unix())
+	if source.IsEncrypted {
+		verifier := repoPasswordVerifier(source.EncVersion, salt, commit.RepoID, password, source.PwdHashAlgo, source.PwdHashParams)
+		commit.Encrypted, commit.EncVersion = "true", source.EncVersion
+		commit.Salt, commit.RandomKey = source.Salt, source.RandomKey
+		if source.PwdHashAlgo == "" {
+			commit.Magic = hex.EncodeToString(verifier)
+		} else {
+			commit.PwdHash = hex.EncodeToString(verifier)
+			commit.PwdHashAlgo, commit.PwdHashParams = source.PwdHashAlgo, source.PwdHashParams
+			commit.HasPwdHashParams = source.HasPwdHashParams
+		}
+		clear(verifier)
+	}
 	if err := r.writeInitialRepoCommit(commit); err != nil {
 		log.Printf("create virtual repo: write initial commit: %v", err)
 		return "", rpcError(errGeneral, "Failed to add commit")

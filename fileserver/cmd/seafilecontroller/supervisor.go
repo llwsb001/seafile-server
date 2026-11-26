@@ -1,3 +1,5 @@
+//go:build linux
+
 package main
 
 import (
@@ -14,6 +16,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"golang.org/x/sys/unix"
 )
 
 const (
@@ -190,7 +194,13 @@ func (c *child) running() bool {
 }
 
 func (c *child) wait() {
-	c.err = c.cmd.Wait()
+	var status unix.Siginfo
+	for {
+		c.err = unix.Waitid(unix.P_PID, c.cmd.Process.Pid, &status, unix.WEXITED|unix.WNOWAIT, nil)
+		if !errors.Is(c.err, syscall.EINTR) {
+			break
+		}
+	}
 	close(c.done)
 }
 
@@ -229,9 +239,24 @@ func (s *supervisor) stop(slot **child) {
 	}
 	*slot = nil
 	pid := proc.cmd.Process.Pid
+	defer func() {
+		if err := removeOwnedPID(proc.pidFile, pid); err != nil {
+			s.logger.Printf("clean up %s: %v", proc.pidFile, err)
+		}
+	}()
 	s.logger.Printf("stopping %s, PID %d", filepath.Base(proc.cmd.Path), pid)
 	// Each child runs in its own process group, including SeafDAV worker
-	// subprocesses. Never signal a PID read from an installation file.
+	// subprocesses. Keep the exited leader unreaped until group signaling
+	// finishes so its PID cannot be reused as another process group's ID.
+	select {
+	case <-proc.done:
+		if proc.err != nil {
+			s.logger.Printf("wait for PID %d: %v", pid, proc.err)
+			_ = proc.cmd.Wait()
+			return
+		}
+	default:
+	}
 	if err := syscall.Kill(-pid, syscall.SIGTERM); err != nil && !errors.Is(err, syscall.ESRCH) {
 		s.logger.Printf("stop PID %d: %v", pid, err)
 	}
@@ -239,6 +264,10 @@ func (s *supervisor) stop(slot **child) {
 	defer timer.Stop()
 	select {
 	case <-proc.done:
+		// The leader can exit while workers are still shutting down.
+		if err := syscall.Kill(-pid, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
+			s.logger.Printf("clean up process group %d: %v", pid, err)
+		}
 	case <-timer.C:
 		s.logger.Printf("force stop PID %d", pid)
 		if err := syscall.Kill(-pid, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
@@ -246,9 +275,7 @@ func (s *supervisor) stop(slot **child) {
 		}
 		<-proc.done
 	}
-	if err := removeOwnedPID(proc.pidFile, pid); err != nil {
-		s.logger.Printf("clean up %s: %v", proc.pidFile, err)
-	}
+	_ = proc.cmd.Wait()
 }
 
 func readPID(path string) int {

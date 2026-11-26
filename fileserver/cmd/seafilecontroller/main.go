@@ -1,4 +1,6 @@
 // seafilecontroller supervises the Linux SQLite Seafile services.
+//go:build linux
+
 package main
 
 import (

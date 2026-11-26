@@ -2,6 +2,8 @@ package seafserver
 
 import (
 	"context"
+	"encoding/json"
+
 	"os"
 	"testing"
 )
@@ -63,6 +65,10 @@ func TestVirtualRepoReadsUsePersistedOwnerAndPath(t *testing.T) {
 	checkLookup("team///", testVirtualOwner, first)
 	checkLookup("/team", recipient, second)
 	checkLookup("/team", "absent@example.test", nil)
+	if result, rpcErr := lookup(ctx, []json.RawMessage{json.RawMessage("null"), json.RawMessage(`"/team"`)}); result != nil || rpcErr != nil {
+		t.Fatalf("null origin = (%v, %v), want an empty lookup", result, rpcErr)
+	}
+
 	result, rpcErr := list(ctx, fileWriteRPCArgs(t, recipient))
 	if rpcErr != nil {
 		t.Fatal(rpcErr)

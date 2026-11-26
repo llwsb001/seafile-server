@@ -10,8 +10,12 @@ import (
 
 func (r *Reader) getVirtualRepo(ctx context.Context, args []json.RawMessage) (any, *searpc.RPCError) {
 	origin, path, owner := stringArgument(args, 0), stringArgument(args, 1), stringArgument(args, 2)
-	if origin == nil || path == nil {
+	if path == nil {
 		return nil, rpcError(errBadArgs, "Argument should not be null")
+	}
+
+	if origin == nil {
+		return nil, nil
 	}
 
 	query := "SELECT repo_id FROM VirtualRepo WHERE origin_repo = ? AND path = ?"

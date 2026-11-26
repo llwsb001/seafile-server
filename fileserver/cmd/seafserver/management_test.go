@@ -18,12 +18,17 @@ import (
 
 func TestManagementRPCBootstrap(t *testing.T) {
 	t.Setenv("ENABLE_GO_FILESERVER", "false")
-	for _, enabled := range []bool{false, true} {
-		name := "default"
-		if enabled {
-			name = "management"
-		}
-		t.Run(name, func(t *testing.T) {
+	for _, test := range []struct {
+		name            string
+		enabled         bool
+		invalidTemplate bool
+	}{
+		{name: "default"},
+		{name: "management", enabled: true},
+		{name: "management with invalid template", enabled: true, invalidTemplate: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			enabled := test.enabled
 			// Keep the path within the Unix socket address limit on macOS.
 			root, err := os.MkdirTemp("", "seaf-rpc-")
 			if err != nil {
@@ -35,6 +40,11 @@ func TestManagementRPCBootstrap(t *testing.T) {
 				t.Fatal(err)
 			}
 			initSeafileSQLite(t, root)
+			if test.invalidTemplate {
+				if err := os.WriteFile(filepath.Join(root, "library-template"), nil, 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
 			ctx, cancel := context.WithCancel(context.Background())
 			ready := make(chan error, 1)
 			args := []string{"-f", "-d", root}
@@ -106,7 +116,11 @@ func TestManagementRPCBootstrap(t *testing.T) {
 				t.Fatalf("enabled setter returned %v, %v", result, err)
 			}
 			templateID, err := client.Call("get_system_default_repo_id")
-			if id, ok := templateID.(string); !ok || len(id) != 36 || err != nil {
+			if test.invalidTemplate {
+				if templateID != nil || err != nil {
+					t.Fatalf("invalid template published a default library: %v, %v", templateID, err)
+				}
+			} else if id, ok := templateID.(string); !ok || len(id) != 36 || err != nil {
 				t.Fatalf("default template was not ready: %v, %v", templateID, err)
 			}
 			result, err = client.Call("get_server_config_string", "example", "value")

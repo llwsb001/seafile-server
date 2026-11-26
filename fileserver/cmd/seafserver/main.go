@@ -137,7 +137,7 @@ func run(ctx context.Context, args []string) error {
 		}
 		defer writer.Close()
 		if err := reader.EnsureSystemDefaultRepo(ctx, writer, quota, dataDir); err != nil {
-			return fmt.Errorf("initialize default system library: %w", err)
+			log.Printf("initialize default system library: %v", err)
 		}
 		maps.Copy(handlers, serverConfig.RPCHandlers(writer))
 		maps.Copy(handlers, reader.AdminRepoReadRPCHandlers())

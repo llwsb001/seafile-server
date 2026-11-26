@@ -146,6 +146,7 @@ func run(ctx context.Context, args []string) error {
 		defer stopTrashExpiry()
 		maps.Copy(handlers, reader.DirectoryShareRPCHandlers(writer))
 		handlers["seafile_get_upload_tmp_file_offset"] = seafserver.UploadOffsetRPC(writer)
+		handlers["set_repo_status"] = seafserver.SetRepoStatusRPC(writer)
 
 		passwords = seafserver.NewRepoPasswords(reader)
 		maps.Copy(handlers, passwords.RPCHandlers())

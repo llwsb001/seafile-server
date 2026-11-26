@@ -50,6 +50,8 @@ func (r *Reader) RPCHandlers(config *ServerConfig) map[string]searpc.Handler {
 		"get_trash_repos_by_owner":    r.listTrashReposByOwner,
 		"get_trash_repo_owner":        r.getTrashRepoOwner,
 
+		"seafile_repo_query_access_property": r.getRepoAccessProperty,
+
 		"seafile_get_file_id_by_commit_and_path": r.fileIDByCommitAndPath,
 		"seafile_get_dir_id_by_commit_and_path":  r.dirIDByCommitAndPath,
 

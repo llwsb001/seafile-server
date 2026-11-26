@@ -138,18 +138,10 @@ func (c *repoCheck) check(ctx context.Context, id string) {
 
 func (c *repoCheck) fallback() (*commitmgr.Commit, *fsmgr.SeafDir) {
 	c.log("Scanning available commits...")
-	ids, err := c.store.CommitIDs(c.repo)
+	commits, err := c.store.candidateCommits(c.repo)
 	if err != nil {
 		c.log("Failed to scan available commits: %v.", err)
 	}
-	var commits []*commitmgr.Commit
-	for _, id := range ids {
-		commit, err := c.store.Commit(c.repo, id)
-		if err == nil {
-			commits = append(commits, commit)
-		}
-	}
-	slices.SortStableFunc(commits, newestCommitFirst)
 	for _, commit := range commits {
 		root, err := c.store.Directory(c.repo, 1, commit.RootID)
 		if isObjectIOError(err) {

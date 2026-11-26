@@ -30,9 +30,7 @@ func TestGroupManagementRPC(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(root, "seafile.conf"), []byte(config), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			if err := os.WriteFile(filepath.Join(root, "seafile.db"), nil, 0o600); err != nil {
-				t.Fatal(err)
-			}
+			initSeafileSQLite(t, root)
 
 			args := []string{"-f", "-d", root}
 			if setup.management {

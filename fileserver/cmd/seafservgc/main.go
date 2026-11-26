@@ -28,6 +28,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	flags.SetOutput(stderr)
 	flags.Usage = func() {
 		fmt.Fprintln(stderr, "usage: seafserv-gc [-F central-config-dir] [-d seafile_dir] [-C|-D] [repo_id ...]")
+		fmt.Fprintln(stderr, "Stop Seafile and its fileserver before running garbage collection.")
 		flags.PrintDefaults()
 	}
 	var dataDir, configDir, ccnetDir, prefix string
@@ -68,10 +69,6 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if version {
 		return 255
 	}
-	if !check && !dryRun {
-		flags.Usage()
-		return 255
-	}
 	if dataDir == "" {
 		dataDir = filepath.Join(ccnetDir, "seafile-data")
 	}
@@ -100,8 +97,10 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	code := 0
 	if check {
 		code, err = store.VerifyGC(ctx, opts.RepoIDs, stdout)
-	} else {
+	} else if dryRun {
 		err = store.DryRunGC(ctx, opts, stdout)
+	} else {
+		err = store.CollectGCBlocks(ctx, opts, stdout)
 	}
 	if err := errors.Join(err, store.Close()); err != nil {
 		fmt.Fprintln(stderr, err)

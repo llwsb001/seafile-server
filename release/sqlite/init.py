@@ -54,14 +54,16 @@ def create_sqlite(database: Path, schema: str) -> None:
     check_sqlite(database)
 
 
-def seahub_database_setting(database: Path) -> str:
-    config = {"default": {"ENGINE": "django.db.backends.sqlite3", "NAME": str(database)}}
-    return f"DATABASES = {config!r}\n"
+def seahub_database_setting(database_expression: str) -> str:
+    return (
+        'DATABASES = {"default": {"ENGINE": "django.db.backends.sqlite3", '
+        f'"NAME": {database_expression}}}}}\n'
+    )
 
 
 def migrate_seahub(database: Path, instance: Path, version: Path) -> None:
     seahub = version / "seahub"
-    settings = "from seahub.settings import *\n" + seahub_database_setting(database)
+    settings = "from seahub.settings import *\n" + seahub_database_setting(repr(str(database)))
     (database.parent / "sqlite_release_migrate.py").write_text(settings, encoding="utf-8")
     pythonpath = (str(database.parent), str(seahub / "thirdpart"), os.environ.get("PYTHONPATH", ""))
     environment = {
@@ -111,9 +113,11 @@ def initialize(version: Path) -> None:
         raise ValueError(f"{conf / 'seafile.conf'} requires [database] type = sqlite")
 
     seahub_settings = (
+        "from pathlib import Path as _Path\n"
+        "_instance_root = _Path(__file__).resolve().parent.parent\n"
         f"SECRET_KEY = {secrets.token_urlsafe(48)!r}\n"
-        f'SEAHUB_DATA_ROOT = {str(instance / "seahub-data")!r}\n'
-    ) + seahub_database_setting(instance / "seahub.db")
+        'SEAHUB_DATA_ROOT = str(_instance_root / "seahub-data")\n'
+    ) + seahub_database_setting('str(_instance_root / "seahub.db")')
     for name, content in (("ccnet.conf", "[General]\n"), ("seahub_settings.py", seahub_settings)):
         publish_new_file(conf / name, lambda staged: staged.write_text(content, encoding="utf-8"))
     for name, schema in schemas.items():

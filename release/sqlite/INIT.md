@@ -7,7 +7,7 @@
 "$SEAHUB_PYTHON" "$VERSION_DIR/init.py" "$VERSION_DIR"
 ```
 
-初始化在版本目录的父目录创建共享的 `conf/`、`seafile-data/`、`ccnet/`、`seahub-data/`、`logs/` 和 `pids/`，并在版本目录下创建 `runtime/`。脚本复制候选的配置样例，从归档 SQL 创建库数据库及四个 ccnet 数据库，并运行 Seahub 的 `manage.py migrate --run-syncdb --noinput` 生成 `seahub.db`。生成的 `conf/seahub_settings.py` 使用单独的 Django 密钥并指向实例的 SQLite 文件。
+初始化在版本目录的父目录创建共享的 `conf/`、`seafile-data/`、`ccnet/`、`seahub-data/`、`logs/` 和 `pids/`，并在版本目录下创建 `runtime/`。脚本复制候选的配置样例，从归档 SQL 创建库数据库及四个 ccnet 数据库，并运行 Seahub 的 `manage.py migrate --run-syncdb --noinput` 生成 `seahub.db`。生成的 `conf/seahub_settings.py` 使用单独的 Django 密钥，从设置文件的位置定位当前实例的数据库和数据目录。
 
 脚本逐个构建并核验临时文件，再发布完整文件。重复初始化保留已有配置和数据库。缺少归档 SQL 或 Seahub、Python 依赖不全、路径不可写或迁移失败时，补齐环境后可直接重跑。对正在运行的实例，按部署流程安排启动和升级。
 

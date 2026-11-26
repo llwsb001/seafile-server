@@ -130,6 +130,8 @@ func run(ctx context.Context, args []string) error {
 		maps.Copy(handlers, reader.HistoryRPCHandlers(writer))
 		maps.Copy(handlers, reader.RepoCreationRPCHandlers(writer))
 		maps.Copy(handlers, reader.RepoTrashWriteRPCHandlers(writer, cloudMode))
+		stopTrashExpiry := reader.StartRepoTrashExpiry(ctx, writer, serverConfig)
+		defer stopTrashExpiry()
 		maps.Copy(handlers, reader.DirectoryShareRPCHandlers(writer))
 		handlers["seafile_get_upload_tmp_file_offset"] = seafserver.UploadOffsetRPC(writer)
 		if identity != nil {

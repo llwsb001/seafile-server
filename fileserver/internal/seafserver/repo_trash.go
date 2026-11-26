@@ -35,7 +35,10 @@ func (r *Reader) RepoTrashWriteRPCHandlers(db *sql.DB, cloudMode bool) map[strin
 			}
 			return 0, nil
 		},
-		"restore_repo_from_trash": r.restoreTrashRepoRPC(db),
+		"restore_repo_from_trash":   r.restoreTrashRepoRPC(db),
+		"del_repo_from_trash":       r.pruneOneTrashRepoRPC(db),
+		"empty_repo_trash":          r.emptyRepoTrashRPC(db, false),
+		"empty_repo_trash_by_owner": r.emptyRepoTrashRPC(db, true),
 	}
 }
 

@@ -80,4 +80,6 @@ Go 修复将只读连接的等待上限设为 2 秒，保留写连接原有的 2
 
 ## 签收状态
 
+合并提交 `315e07be2536a0def07f6fd26cfc99bebaa43cd8` 的 arm64 归档也完成了独立复验，SHA-256 为 `e79d0e25449d4dbd53f6220b1c3ac57afe8720363b16a15c4e629be29ad0664c`。三轮分别持续 183.91、182.08 和 180.98 秒，共 157 个完整循环，均通过重启后校验。同一归档通过 v9 安装、快照恢复和 C 接管。 [合并候选 amd64 CI](https://github.com/llwsb001/seafile-compat-tests/actions/runs/45758686986)
+
 修复候选 `5e6a1ce` 通过 Go 独立持续负载和 v1–v9。服务端 `315e07b` 合入修复，运行时代码与实测提交一致。兼容回归及同数据回退继续使用锁定 C。已记录的 C 持续负载基线仍未完成，C/Go 相对阈值与发行签收保持待通过。 [现有发行门槛](go-migration-sqlite-release-acceptance.md#发行门槛)

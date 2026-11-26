@@ -31,6 +31,7 @@ func (r *Reader) RPCHandlers(config *ServerConfig) map[string]searpc.Handler {
 		"seafile_get_commit_list":     r.commitList(config),
 		"seafile_diff":                r.commitDiff,
 		"seafile_list_file_revisions": r.fileRevisions(config),
+		"get_deleted":                 r.deletedEntries(config),
 		"seafile_list_dir_by_path":    r.listDirByPath,
 		"seafile_list_dir":            r.listDirByID,
 		"seafile_get_file_id_by_path": r.fileIDByPath,

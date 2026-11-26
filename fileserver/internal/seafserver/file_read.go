@@ -117,8 +117,12 @@ type commitQueue struct {
 	pending []*commitmgr.Commit
 }
 
-func newCommitQueue(r *Reader, repoID string, head *commitmgr.Commit) *commitQueue {
-	return &commitQueue{r, repoID, map[string]bool{head.CommitID: true}, []*commitmgr.Commit{head}}
+func newCommitQueue(r *Reader, repoID string, commits ...*commitmgr.Commit) *commitQueue {
+	visited := make(map[string]bool, len(commits))
+	for _, commit := range commits {
+		visited[commit.CommitID] = true
+	}
+	return &commitQueue{reader: r, repoID: repoID, visited: visited, pending: commits}
 }
 
 func (q *commitQueue) pop() *commitmgr.Commit {
@@ -128,13 +132,15 @@ func (q *commitQueue) pop() *commitmgr.Commit {
 	return next
 }
 
-func (q *commitQueue) addParents(commit *commitmgr.Commit) {
+func (q *commitQueue) addParents(commit *commitmgr.Commit) error {
+	var loadErr error
 	for _, parent := range []commitmgr.String{commit.ParentID, commit.SecondParentID} {
 		if !parent.Valid || q.visited[parent.String] {
 			continue
 		}
 		next, err := q.reader.Commit(q.repoID, parent.String)
 		if err != nil {
+			loadErr = err
 			continue
 		}
 		q.visited[parent.String] = true
@@ -144,4 +150,5 @@ func (q *commitQueue) addParents(commit *commitmgr.Commit) {
 		copy(q.pending[position+1:], q.pending[position:])
 		q.pending[position] = next
 	}
+	return loadErr
 }

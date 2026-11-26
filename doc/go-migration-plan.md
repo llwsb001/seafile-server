@@ -42,6 +42,8 @@ make -C "$SEAFILE_COMPAT_TESTS" test-data IMPL=c-baseline FIXTURES_DIR="$SEAFILE
 
 在 [Searpc 注册表](../server/seaf-server.c)、[C HTTP 路由](../server/http-server.c)、[Go HTTP 路由](../fileserver/fileserver.go) 和 [安装规则](../lib/Makefile.am) 中查找阶段 3 至 8 的契约。已有 [Python 集成测试](../tests) 提供库操作、权限、回收站、虚拟库和 GC 的回归用例。端到端测试由现有 Python 客户端、Seahub 和桌面客户端调用被测服务。
 
+SQLite 文件服务验收后的任务、依赖和复现命令见 [SQLite 库生命周期与离线运维迁移计划](go-migration-sqlite-lifecycle-maintenance.md)，覆盖剩余的阶段 5 库与文件操作及阶段 7 的离线工具和 controller。
+
 ## 写入切换与回退
 
 1. 灰度前，演练一次从一致的数据库和存储快照启动 C，再切到 Go 写入，最后用同一份数据启动 C。验证历史、权限、文件内容和新写入。

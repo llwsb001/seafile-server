@@ -12,6 +12,7 @@ import (
 )
 
 const detectObjectVersion = -1
+const legacyFileHeaderSize = 12 // 32-bit type, 64-bit file size
 
 var errLegacyObjectWrite = errors.New("legacy FS object creation requires the C fileserver")
 
@@ -31,18 +32,17 @@ func isLegacyObject(version int, data []byte, objectType uint32) bool {
 
 // Legacy objects use the binary layouts in common/fs-mgr.c.
 func decodeLegacyFile(id string, data []byte) (*Seafile, error) {
-	const headerSize = 12 // 32-bit type, 64-bit file size
-	if len(data) < headerSize || binary.BigEndian.Uint32(data) != SeafMetadataTypeFile ||
-		(len(data)-headerSize)%sha1.Size != 0 {
+	if len(data) < legacyFileHeaderSize || binary.BigEndian.Uint32(data) != SeafMetadataTypeFile ||
+		(len(data)-legacyFileHeaderSize)%sha1.Size != 0 {
 		return nil, fmt.Errorf("invalid legacy file object %s", id)
 	}
 	file := &Seafile{
 		FileID:   id,
 		FileType: SeafMetadataTypeFile,
-		FileSize: binary.BigEndian.Uint64(data[4:headerSize]),
-		BlkIDs:   make([]string, 0, (len(data)-headerSize)/sha1.Size),
+		FileSize: binary.BigEndian.Uint64(data[4:legacyFileHeaderSize]),
+		BlkIDs:   make([]string, 0, (len(data)-legacyFileHeaderSize)/sha1.Size),
 	}
-	for data = data[headerSize:]; len(data) > 0; data = data[sha1.Size:] {
+	for data = data[legacyFileHeaderSize:]; len(data) > 0; data = data[sha1.Size:] {
 		file.BlkIDs = append(file.BlkIDs, hex.EncodeToString(data[:sha1.Size]))
 	}
 	return file, nil
@@ -74,4 +74,19 @@ func decodeLegacyDir(id string, data []byte) (*SeafDir, error) {
 		data = data[entrySize:]
 	}
 	return dir, nil
+}
+
+func verifyLegacyDirID(dir *SeafDir) error {
+	hash := sha1.New()
+	var mode [4]byte
+	for _, entry := range dir.Entries {
+		hash.Write([]byte(entry.ID))
+		hash.Write([]byte(entry.Name))
+		binary.LittleEndian.PutUint32(mode[:], entry.Mode)
+		hash.Write(mode[:])
+	}
+	if hex.EncodeToString(hash.Sum(nil)) != dir.DirID {
+		return fmt.Errorf("object ID %s does not match its contents", dir.DirID)
+	}
+	return nil
 }

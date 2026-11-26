@@ -53,6 +53,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		{"C", "check", "check data integrity", &check},
 		{"D", "dry-run", "report unused blocks", &dryRun},
 		{"V", "verbose", "list candidate block IDs and history cutoffs", &opts.Verbose},
+		{"r", "rm-deleted", "process only permanently deleted libraries", &opts.DeletedOnly},
+		{"R", "rm-fs", "collect unreachable FS objects along with blocks", &opts.RemoveFS},
 		{"v", "version", "return version status", &version},
 	} {
 		flags.BoolVar(field.dest, field.short, false, field.help)
@@ -95,7 +97,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	code := 0
-	if check {
+	if opts.DeletedOnly {
+		err = store.CollectGCDeleted(ctx, dryRun, stdout)
+	} else if check {
 		code, err = store.VerifyGC(ctx, opts.RepoIDs, stdout)
 	} else if dryRun {
 		err = store.DryRunGC(ctx, opts, stdout)

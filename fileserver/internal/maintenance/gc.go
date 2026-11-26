@@ -18,10 +18,12 @@ import (
 )
 
 type GCOptions struct {
-	RepoIDs []string
-	Prefix  *string
-	Verbose bool
-	Threads int
+	RepoIDs     []string
+	Prefix      *string
+	Verbose     bool
+	Threads     int
+	RemoveFS    bool
+	DeletedOnly bool
 }
 
 type gcPlan struct {
@@ -29,7 +31,9 @@ type gcPlan struct {
 	reachable  reachableObjects
 	cutoffs    map[string]int64
 	unused     []string
+	unusedFS   []string
 	blockCount int
+	fsCount    int
 	skip       string
 }
 
@@ -62,7 +66,7 @@ func (s *Store) DryRunGC(ctx context.Context, options GCOptions, output io.Write
 			defer wait.Done()
 			for i := worker; i < len(ids) && scanCtx.Err() == nil; i += workers {
 				var report strings.Builder
-				err := s.dryRunGCRepo(scanCtx, ids[i], now, options.Verbose, &report)
+				err := s.dryRunGCRepo(scanCtx, ids[i], now, options, &report)
 				writing.Lock()
 				if _, writeErr := io.WriteString(output, report.String()); err == nil {
 					err = writeErr
@@ -79,11 +83,16 @@ func (s *Store) DryRunGC(ctx context.Context, options GCOptions, output io.Write
 	if err := errors.Join(scanError, ctx.Err()); err != nil {
 		return err
 	}
+	if options.Prefix != nil || len(options.RepoIDs) == 0 {
+		if err := s.CollectGCDeleted(ctx, true, output); err != nil {
+			return err
+		}
+	}
 	fmt.Fprintln(output, "=== GC is finished ===")
 	return nil
 }
 
-func (s *Store) dryRunGCRepo(ctx context.Context, id string, now time.Time, verbose bool, output io.Writer) error {
+func (s *Store) dryRunGCRepo(ctx context.Context, id string, now time.Time, opts GCOptions, output io.Writer) error {
 	repo, err := s.Repo(ctx, id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
@@ -98,7 +107,7 @@ func (s *Store) dryRunGCRepo(ctx context.Context, id string, now time.Time, verb
 		fmt.Fprintf(output, "Repo %s is damaged, skip GC. %v\n", id, err)
 		return nil
 	}
-	plan, err := s.planGC(ctx, repo, now)
+	plan, err := s.planGC(ctx, repo, now, opts.RemoveFS)
 	if err != nil {
 		fmt.Fprintf(output, "Repo %s is damaged, skip GC. %v\n", id, err)
 		return ctx.Err()
@@ -108,16 +117,24 @@ func (s *Store) dryRunGCRepo(ctx context.Context, id string, now time.Time, verb
 		return nil
 	}
 	fmt.Fprintf(output, "Scanning unused blocks for repo %.8s.\n", id)
-	if verbose {
+	if opts.Verbose {
 		for _, repoID := range sortedStringKeys(plan.cutoffs) {
 			fmt.Fprintf(output, "History cutoff for repo %s: %d.\n", repoID, plan.cutoffs[repoID])
 		}
 		for _, block := range plan.unused {
 			fmt.Fprintf(output, "Unused block %s in repo %s.\n", block, plan.repo.ID)
 		}
+		for _, id := range plan.unusedFS {
+			fmt.Fprintf(output, "Unused FS object %s in repo %s.\n", id, plan.repo.ID)
+		}
 	}
-	fmt.Fprintf(output, "GC finished for repo %.8s. %d blocks total, about %d reachable blocks, %d blocks can be removed.\n",
+	fmt.Fprintf(output, "GC finished for repo %.8s. %d blocks total, about %d reachable blocks, %d blocks can be removed.",
 		id, plan.blockCount, len(plan.reachable.blocks), len(plan.unused))
+	if opts.RemoveFS {
+		fmt.Fprintf(output, " %d fs total, about %d reachable fs, %d fs can be removed.",
+			plan.fsCount, len(plan.reachable.fs), len(plan.unusedFS))
+	}
+	fmt.Fprintln(output)
 	return nil
 }
 
@@ -137,7 +154,7 @@ func (s *Store) gcRepoIDs(ctx context.Context, explicit []string, prefix *string
 	return explicit, nil
 }
 
-func (s *Store) planGC(ctx context.Context, repo Repo, now time.Time) (gcPlan, error) {
+func (s *Store) planGC(ctx context.Context, repo Repo, now time.Time, includeFS bool) (gcPlan, error) {
 	plan := gcPlan{repo: repo}
 	cutoff, err := s.readHistoryCutoff(ctx, repo, now)
 	if err != nil {
@@ -182,6 +199,18 @@ func (s *Store) planGC(ctx context.Context, repo Repo, now time.Time) (gcPlan, e
 	for _, block := range blocks {
 		if _, keep := plan.reachable.blocks[block]; !keep {
 			plan.unused = append(plan.unused, block)
+		}
+	}
+	if includeFS {
+		files, err := s.objectIDs("fs", repo.StoreID)
+		if err != nil {
+			return plan, err
+		}
+		plan.fsCount = len(files)
+		for _, id := range files {
+			if _, keep := plan.reachable.fs[id]; !keep {
+				plan.unusedFS = append(plan.unusedFS, id)
+			}
 		}
 	}
 	return plan, nil

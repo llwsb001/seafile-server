@@ -64,7 +64,7 @@ func TestGCBlocksCommitBoundaryBeforeDeletionAndCanRetry(t *testing.T) {
 			plan := gcPlan{repo: Repo{ID: repoID}, unused: []string{first, second}, cutoffs: map[string]int64{repoID: cutoff}}
 			interrupted, cancel := context.WithCancel(ctx)
 			defer cancel()
-			removed, err := applyBlockPlan(interrupted, db, plan, before, func(block string) error {
+			removed, err := applyGCPlan(interrupted, db, plan, before, func(kind, block string) error {
 				var current int64
 				if err := db.QueryRow("SELECT timestamp FROM RepoValidSince WHERE repo_id = ?", repoID).Scan(&current); err != nil || current != cutoff {
 					t.Fatalf("deletion ran before the boundary commit: %d, %v", current, err)
@@ -72,7 +72,7 @@ func TestGCBlocksCommitBoundaryBeforeDeletionAndCanRetry(t *testing.T) {
 				if failure == "before-deletion" {
 					return errors.New("fixture stopped after commit")
 				}
-				if err := removeGCBlock(root, repoID, block); err != nil {
+				if err := removeGCObject(root, kind, repoID, block); err != nil {
 					return err
 				}
 				cancel()
@@ -103,8 +103,8 @@ func TestGCBlocksCommitBoundaryBeforeDeletionAndCanRetry(t *testing.T) {
 				t.Fatal(err)
 			}
 			plan.unused = remaining
-			_, err = applyBlockPlan(ctx, db, plan, retryReferences, func(block string) error {
-				return removeGCBlock(root, repoID, block)
+			_, err = applyGCPlan(ctx, db, plan, retryReferences, func(kind, block string) error {
+				return removeGCObject(root, kind, repoID, block)
 			})
 			if err != nil {
 				t.Fatal(err)

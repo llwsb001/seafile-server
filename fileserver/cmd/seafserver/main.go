@@ -154,6 +154,7 @@ func run(ctx context.Context, args []string) error {
 		maps.Copy(handlers, passwords.RPCHandlers())
 		stopPasswords := passwords.StartCleanup(ctx)
 		defer stopPasswords()
+		handlers["seafile_repo_set_access_property"] = seafserver.SetRepoAccessPropertyRPC(writer)
 
 		if identity != nil {
 			copyConfig := config.Section("web_copy")

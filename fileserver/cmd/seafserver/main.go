@@ -153,6 +153,7 @@ func run(ctx context.Context, args []string) error {
 
 		passwords = seafserver.NewRepoPasswords(reader)
 		maps.Copy(handlers, passwords.RPCHandlers())
+		maps.Copy(handlers, passwords.MutationRPCHandlers(writer))
 		stopPasswords := passwords.StartCleanup(ctx)
 		defer stopPasswords()
 		handlers["seafile_repo_set_access_property"] = seafserver.SetRepoAccessPropertyRPC(writer)

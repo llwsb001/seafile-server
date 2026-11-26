@@ -79,13 +79,27 @@ func (r *Reader) newRepoEditCommit(ctx context.Context, repo *repomgr.Repo, pare
 	if user != nil {
 		creator = *user
 	}
+	commit, err := r.newRepoMetadataCommit(ctx, repo, parent, creator, repoEditMessage)
+	if err != nil {
+		return nil, err
+	}
+	if name != nil {
+		commit.RepoName = *name
+	}
+	if description != nil {
+		commit.RepoDesc = *description
+	}
+	return commit, nil
+}
+
+func (r *Reader) newRepoMetadataCommit(ctx context.Context, repo *repomgr.Repo, parent *commitmgr.Commit, creator, message string) (*commitmgr.Commit, error) {
 	for timestamp := time.Now().Unix(); ; timestamp++ {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		commit := commitmgr.NewCanonicalCommit(repo.ID, parent.CommitID, parent.RootID, creator, repoEditMessage, timestamp)
-		// The C hash excludes the parent, library name, and library description.
-		// Consecutive edits by the same creator must use distinct object IDs.
+		commit := commitmgr.NewCanonicalCommit(repo.ID, parent.CommitID, parent.RootID, creator, message, timestamp)
+		// The C hash excludes parent and repository metadata. Two consecutive
+		// updates with the same message and creator need distinct object IDs.
 		exists, err := r.commits.Exists(repo.ID, commit.CommitID)
 		if err != nil && !errors.Is(err, os.ErrNotExist) {
 			return nil, err
@@ -97,12 +111,6 @@ func (r *Reader) newRepoEditCommit(ctx context.Context, repo *repomgr.Repo, pare
 		commit.RepoDesc = parent.RepoDesc
 		commit.NoLocalHistory = parent.NoLocalHistory
 		commit.Repaired = parent.Repaired
-		if name != nil {
-			commit.RepoName = *name
-		}
-		if description != nil {
-			commit.RepoDesc = *description
-		}
 		return commit, nil
 	}
 }

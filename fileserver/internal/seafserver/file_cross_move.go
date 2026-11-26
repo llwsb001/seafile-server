@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"slices"
 	"strings"
 
 	"github.com/haiwen/seafile-server/fileserver/fsmgr"
@@ -89,6 +90,15 @@ func (w *fileWriter) moveTrees(ctx context.Context, move libraryTransfer) ([2]*f
 			return trees, rpcErr
 		}
 		trees[i] = tree
+	}
+	from, to := trees[0], trees[1]
+	if move.replace && from.repo.StoreID == to.repo.StoreID &&
+		slices.Equal(originPath(from, move.fromPath), originPath(to, move.toPath)) {
+		for _, target := range move.targets {
+			if slices.Contains(move.names, target) {
+				return trees, rpcError(errBadArgs, "Move would overwrite a source entry")
+			}
+		}
 	}
 	return trees, nil
 }

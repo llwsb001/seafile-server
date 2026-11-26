@@ -13,6 +13,19 @@ import (
 // NewCanonicalCommit computes the object ID using the C server's commit format.
 func NewCanonicalCommit(repoID, parentID, rootID, creator, description string, timestamp int64) *Commit {
 	commit := newCommit(repoID, parentID, rootID, creator, description, timestamp)
+	setCanonicalCommitID(commit)
+	return commit
+}
+
+// NewCanonicalRepairCommit preserves the author ID of the commit being repaired.
+func NewCanonicalRepairCommit(repoID, rootID string, parent *Commit, description string, timestamp int64) *Commit {
+	commit := newCommit(repoID, parent.CommitID, rootID, parent.CreatorName, description, timestamp)
+	commit.CreatorID = parent.CreatorID
+	setCanonicalCommitID(commit)
+	return commit
+}
+
+func setCanonicalCommitID(commit *Commit) {
 	hash := sha1.New()
 	var root, creatorID [41]byte // The C hash includes the NUL terminator of each fixed ID.
 	copy(root[:40], commit.RootID)
@@ -25,7 +38,6 @@ func NewCanonicalCommit(repoID, parentID, rootID, creator, description string, t
 	binary.BigEndian.PutUint64(ctime[:], uint64(commit.Ctime))
 	hash.Write(ctime[:])
 	commit.CommitID = hex.EncodeToString(hash.Sum(nil))
-	return commit
 }
 
 // SaveCanonicalToStore serializes and flushes a server-generated C format commit.

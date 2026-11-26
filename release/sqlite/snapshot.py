@@ -44,11 +44,10 @@ class HashingReader:
         return data
 
 
-def digest(path):
+def digest(stream):
     checksum = sha256()
-    with path.open("rb") as stream:
-        for data in iter(lambda: stream.read(1024 * 1024), b""):
-            checksum.update(data)
+    for data in iter(lambda: stream.read(1024 * 1024), b""):
+        checksum.update(data)
     return checksum.hexdigest()
 
 
@@ -186,9 +185,9 @@ def validate_name(name):
     return path
 
 
-def extract_archive(archive, output):
+def extract_archive(stream, output):
     directories = []
-    with tarfile.open(archive, "r:gz") as tar:
+    with tarfile.open(fileobj=stream, mode="r:gz") as tar:
         items = tar.getmembers()
         paths = [item.name for item in items]
         if len(paths) != len(set(paths)) or paths.count(MANIFEST) != 1:
@@ -241,20 +240,23 @@ def archive_instance(instance, archive):
         # Verify exactly the files read while the instance is stopped.
         checked = Path(directory) / "check"
         checked.mkdir(mode=0o700)
-        extract_archive(staged, checked)
-        checksum = digest(staged)
         with staged.open("rb") as output:
+            extract_archive(output, checked)
+            output.seek(0)
+            checksum = digest(output)
             os.fsync(output.fileno())
         os.link(staged, archive)
     print(f"{checksum}  {archive}")
 
 
 def restore_instance(archive, instance, expected_sha256):
-    if expected_sha256 is not None and digest(archive) != expected_sha256:
-        raise ValueError("快照归档 SHA-256 不匹配")
-    with TemporaryDirectory(prefix="sqlite-restore-", dir=instance.parent) as directory:
+    with archive.open("rb") as source, TemporaryDirectory(prefix="sqlite-restore-", dir=instance.parent) as directory:
+        if expected_sha256 is not None:
+            if digest(source) != expected_sha256:
+                raise ValueError("快照归档 SHA-256 不匹配")
+            source.seek(0)
         staged = Path(directory)
-        extract_archive(archive, staged)
+        extract_archive(source, staged)
         publish_restored_directory(staged, instance)
     print(f"已验证并恢复 SQLite 实例至 {instance}")
 

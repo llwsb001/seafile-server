@@ -2,11 +2,29 @@ package seafserver
 
 import (
 	"bytes"
+	"crypto/sha1"
+	"encoding/hex"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/haiwen/seafile-server/fileserver/repomgr"
 )
+
+func TestTranscodeRejectsCorruptedSourceBlock(t *testing.T) {
+	reader := NewReader(nil, t.TempDir())
+	from := &fileTree{reader: reader, repo: &repomgr.Repo{StoreID: "source"}}
+	to := &fileTree{reader: reader, repo: &repomgr.Repo{StoreID: "target"}}
+	checksum := sha1.Sum([]byte("original contents"))
+	id := hex.EncodeToString(checksum[:])
+	if err := reader.blocks.Write(from.repo.StoreID, id, strings.NewReader("damaged contents"), true); err != nil {
+		t.Fatal(err)
+	}
+	copy := libraryCopy{from: from, to: to, targetKey: transferKey{version: 4, key: make([]byte, 32), iv: make([]byte, 16)}}
+	if _, err := copy.transcodeBlock(id); err == nil || !strings.Contains(err.Error(), "checksum mismatch") {
+		t.Fatalf("transcode with a damaged source block returned %v", err)
+	}
+}
 
 func TestTransferUsesUnexpiredKeysForTheRequestUser(t *testing.T) {
 	const owner = "owner@example.test"

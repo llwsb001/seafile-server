@@ -20,6 +20,9 @@ func (r *Reader) RepoCreationRPCHandlers(db *sql.DB) map[string]searpc.Handler {
 		"seafile_create_repo": func(ctx context.Context, args []json.RawMessage) (any, *searpc.RPCError) {
 			return r.createRepo(ctx, db, args)
 		},
+		"seafile_create_enc_repo": func(ctx context.Context, args []json.RawMessage) (any, *searpc.RPCError) {
+			return r.createEncryptedRepo(ctx, db, args)
+		},
 		"create_virtual_repo": func(ctx context.Context, args []json.RawMessage) (any, *searpc.RPCError) {
 			return r.createVirtualRepo(ctx, db, args)
 		},
@@ -88,7 +91,7 @@ func publishInitialRepo(ctx context.Context, conn *sql.Conn, commit *commitmgr.C
 		return err
 	}
 	_, err := conn.ExecContext(ctx, `INSERT INTO RepoInfo
-		(repo_id, name, update_time, version, is_encrypted, last_modifier) VALUES (?, ?, ?, ?, 0, ?)`,
-		commit.RepoID, commit.RepoName, commit.Ctime, commit.Version, commit.CreatorName)
+		(repo_id, name, update_time, version, is_encrypted, last_modifier) VALUES (?, ?, ?, ?, ?, ?)`,
+		commit.RepoID, commit.RepoName, commit.Ctime, commit.Version, commit.Encrypted == "true", commit.CreatorName)
 	return err
 }

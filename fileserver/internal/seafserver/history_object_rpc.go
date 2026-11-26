@@ -107,6 +107,18 @@ func (r *Reader) listDirByID(ctx context.Context, args []json.RawMessage) (any, 
 	if err != nil {
 		return nil, rpcError(errBadDirID, "Bad dir id")
 	}
+	var entries []map[string]any
+	for _, entry := range directoryEntryPage(dir, intArgument(args, 2), intArgument(args, 3)) {
+		if utils.IsObjectIDValid(entry.ID) {
+			value := direntObject(entry, dir.Version)
+			value["permission"] = ""
+			entries = append(entries, value)
+		}
+	}
+	return entries, nil
+}
+
+func directoryEntryPage(dir *fsmgr.SeafDir, offset, limit int) []*fsmgr.SeafDirent {
 	sort.SliceStable(dir.Entries, func(i, j int) bool {
 		a, b := dir.Entries[i], dir.Entries[j]
 		if fsmgr.IsDir(a.Mode) && fsmgr.IsRegular(b.Mode) {
@@ -117,19 +129,13 @@ func (r *Reader) listDirByID(ctx context.Context, args []json.RawMessage) (any, 
 		}
 		return asciiLower(a.Name) < asciiLower(b.Name)
 	})
-	offset, limit := max(0, intArgument(args, 2)), intArgument(args, 3)
+	offset = max(0, offset)
 	end := len(dir.Entries)
 	if limit > 0 {
 		end = min(end, int(int32(offset)+int32(limit)))
 	}
-	var entries []map[string]any
-	for i := offset; i < end; i++ {
-		entry := dir.Entries[i]
-		if utils.IsObjectIDValid(entry.ID) {
-			value := direntObject(entry, dir.Version)
-			value["permission"] = ""
-			entries = append(entries, value)
-		}
+	if offset >= end {
+		return nil
 	}
-	return entries, nil
+	return dir.Entries[offset:end]
 }

@@ -23,6 +23,7 @@ func (r *Reader) PermissionRPCHandlers(identity *Identity, cloudMode bool) map[s
 	return map[string]searpc.Handler{
 		"check_permission":              permissions.handler(1),
 		"check_permission_by_path":      permissions.handler(2),
+		"list_dir_with_perm":            r.listDirWithPermission(permissions),
 		"get_group_repos_by_user":       r.listGroupReposByUser(identity, false),
 		"get_org_group_repos_by_user":   r.listGroupReposByUser(identity, true),
 		"get_group_shared_repo_by_path": r.groupSharedRepoByPath(identity),

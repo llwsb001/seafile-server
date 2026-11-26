@@ -66,3 +66,31 @@ WHERE RepoOwner.owner_id IS NULL`
 	}
 	return result, nil
 }
+
+func (r *Reader) totalAdminRepoFiles(ctx context.Context, _ []json.RawMessage) (any, *searpc.RPCError) {
+	const query = `
+SELECT COALESCE(SUM(f.file_count), 0)
+FROM RepoFileCount f
+LEFT JOIN VirtualRepo v ON f.repo_id = v.repo_id
+JOIN Repo r ON f.repo_id = r.repo_id
+WHERE v.repo_id IS NULL`
+	return r.adminRepoTotal(ctx, query, "Failed to get total file number from db.")
+}
+
+func (r *Reader) totalAdminRepoStorage(ctx context.Context, _ []json.RawMessage) (any, *searpc.RPCError) {
+	// C includes retained RepoSize rows after the corresponding Repo row is gone.
+	const query = `
+SELECT COALESCE(SUM(s.size), 0)
+FROM RepoSize s LEFT JOIN VirtualRepo v ON s.repo_id = v.repo_id
+WHERE v.repo_id IS NULL`
+	return r.adminRepoTotal(ctx, query, "Failed to get total storage occupation from db.")
+}
+
+func (r *Reader) adminRepoTotal(ctx context.Context, query, errorMessage string) (any, *searpc.RPCError) {
+	var value int64
+	if err := r.db.QueryRowContext(ctx, query).Scan(&value); err != nil {
+		log.Printf("%s %v", errorMessage, err)
+		return int64(-1), rpcError(errGeneral, errorMessage)
+	}
+	return value, nil
+}

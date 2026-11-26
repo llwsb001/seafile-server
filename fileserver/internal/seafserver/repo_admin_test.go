@@ -262,3 +262,38 @@ func TestAdminRepoStorageAndOrphans(t *testing.T) {
 		t.Fatalf("orphan repository object = %+v", got)
 	}
 }
+
+func TestAdminRepoTotals(t *testing.T) {
+	reader := adminRepoFixture(t)
+	checkTotals := func(files, storage int64) {
+		t.Helper()
+		for _, check := range []struct {
+			method string
+			want   int64
+		}{
+			{"get_total_file_number", files},
+			{"get_total_storage", storage},
+		} {
+			value, rpcErr := callAdminRepoRPC(t, reader, check.method)
+			if value != check.want || rpcErr != nil {
+				t.Fatalf("%s = %v, %v, want %d", check.method, value, rpcErr, check.want)
+			}
+		}
+	}
+	checkTotals(46, 195)
+	if _, err := reader.db.Exec("UPDATE RepoFileCount SET file_count = 4294967300 WHERE repo_id = ?", adminFirst); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := reader.db.Exec("UPDATE RepoSize SET size = 8589934592 WHERE repo_id = ?", adminFirst); err != nil {
+		t.Fatal(err)
+	}
+	checkTotals(4294967344, 8589934782)
+	if _, err := reader.db.Exec("DELETE FROM Repo WHERE repo_id = ?", adminFirst); err != nil {
+		t.Fatal(err)
+	}
+	checkTotals(44, 8589934782)
+	if _, err := reader.db.Exec("DELETE FROM RepoFileCount; DELETE FROM RepoSize"); err != nil {
+		t.Fatal(err)
+	}
+	checkTotals(0, 0)
+}

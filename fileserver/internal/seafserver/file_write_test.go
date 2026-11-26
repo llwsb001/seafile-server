@@ -28,7 +28,7 @@ func TestFileWriteRequiresGrantAndWritableRepository(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	handlers, closeMoves := reader.FileWriteRPCHandlers(ctx, db, nil, false, nil, FileMoveLimits{})
+	handlers, closeMoves := reader.FileWriteRPCHandlers(ctx, db, nil, false, nil, NewRepoPasswords(reader), FileMoveLimits{})
 	defer closeMoves()
 	post := handlers["seafile_post_empty_file"]
 	if _, rpcErr := post(ctx, fileWriteRPCArgs(t, repoID, "/", "denied.txt", "reader@example.test")); rpcErr == nil || rpcErr.Code != errRepoAuth {

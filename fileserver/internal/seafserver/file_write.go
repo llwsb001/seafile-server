@@ -34,15 +34,16 @@ type fileWriter struct {
 	db          *sql.DB
 	permissions *permissionReader
 	quota       *UserQuota
+	passwords   *RepoPasswords
 	moves       *fileMoveQueue
 	limits      FileMoveLimits
 }
 
 // FileWriteRPCHandlers exposes SQLite library writes on the private core socket.
-func (r *Reader) FileWriteRPCHandlers(ctx context.Context, db *sql.DB, identity *Identity, cloudMode bool, quota *UserQuota, limits FileMoveLimits) (map[string]searpc.Handler, func()) {
+func (r *Reader) FileWriteRPCHandlers(ctx context.Context, db *sql.DB, identity *Identity, cloudMode bool, quota *UserQuota, passwords *RepoPasswords, limits FileMoveLimits) (map[string]searpc.Handler, func()) {
 	writer := &fileWriter{reader: r, db: db,
 		permissions: &permissionReader{db: r.db, identity: identity, cloudMode: cloudMode},
-		quota:       quota, moves: newFileMoveQueue(ctx), limits: limits,
+		quota:       quota, passwords: passwords, moves: newFileMoveQueue(ctx), limits: limits,
 	}
 	return map[string]searpc.Handler{
 		"seafile_revert_on_server":   writer.revertRepo,

@@ -21,7 +21,7 @@ func TestCopyChecksSourceHeadAndCancellationBeforePublication(t *testing.T) {
 	}
 	source, target := create("source"), create("target")
 	quota := NewUserQuota(db, NewServerConfig(db, nil))
-	handlers, stop := reader.FileWriteRPCHandlers(ctx, db, nil, false, quota, FileMoveLimits{})
+	handlers, stop := reader.FileWriteRPCHandlers(ctx, db, nil, false, quota, NewRepoPasswords(reader), FileMoveLimits{})
 	defer stop()
 	post := func(name string) {
 		t.Helper()

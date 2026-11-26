@@ -51,9 +51,6 @@ func (w *fileWriter) copyTrees(ctx context.Context, transfer libraryTransfer) (*
 	if rpcErr != nil {
 		return nil, nil, rpcErr
 	}
-	if to.repo.IsEncrypted {
-		return nil, nil, rpcError(errBadArgs, "Copy requires unencrypted libraries")
-	}
 	if transfer.fromRepo == transfer.toRepo {
 		return to, to, nil
 	}
@@ -64,9 +61,6 @@ func (w *fileWriter) copyTrees(ctx context.Context, transfer libraryTransfer) (*
 	}
 	if repo.IsCorrupted || repo.Version != 1 || repo.VirtualInfo != nil {
 		return nil, nil, rpcError(errBadArgs, "File RPC requires an ordinary version 1 library")
-	}
-	if repo.IsEncrypted {
-		return nil, nil, rpcError(errBadArgs, "Copy requires unencrypted libraries")
 	}
 	permission, err := w.permissions.check(ctx, repo.ID, transfer.user)
 	if err != nil {
@@ -89,8 +83,7 @@ func (w *fileWriter) runCopy(ctx context.Context, transfer libraryTransfer, task
 		if from == to {
 			description, rpcErr = copyWithinLibrary(to, transfer)
 		} else {
-			copy := libraryCopy{ctx: ctx, from: from, to: to, task: task, limits: w.limits}
-			description, rpcErr = copy.insert(transfer, w.quota)
+			description, rpcErr = w.copyAcrossLibraries(ctx, from, to, transfer, task)
 		}
 		if rpcErr != nil {
 			return rpcErr
@@ -108,6 +101,15 @@ func (w *fileWriter) runCopy(ctx context.Context, transfer libraryTransfer, task
 		return nil
 	}
 	return rpcError(520, "Concurrent update")
+}
+
+func (w *fileWriter) copyAcrossLibraries(ctx context.Context, from, to *fileTree, transfer libraryTransfer, task *fileMoveTask) (string, *searpc.RPCError) {
+	copier := libraryCopy{ctx: ctx, from: from, to: to, task: task, limits: w.limits}
+	defer copier.clearKeys()
+	if rpcErr := copier.loadKeys(w.passwords); rpcErr != nil {
+		return "", rpcErr
+	}
+	return copier.insert(transfer, w.quota)
 }
 
 func (w *fileWriter) publishCopy(ctx context.Context, from, to *fileTree, desc string, task *fileMoveTask) error {

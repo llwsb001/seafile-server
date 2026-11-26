@@ -134,6 +134,12 @@ func run(ctx context.Context, args []string) error {
 		defer stopTrashExpiry()
 		maps.Copy(handlers, reader.DirectoryShareRPCHandlers(writer))
 		handlers["seafile_get_upload_tmp_file_offset"] = seafserver.UploadOffsetRPC(writer)
+
+		passwords = seafserver.NewRepoPasswords(reader)
+		maps.Copy(handlers, passwords.RPCHandlers())
+		stopPasswords := passwords.StartCleanup(ctx)
+		defer stopPasswords()
+
 		if identity != nil {
 			copyConfig := config.Section("web_copy")
 			maxMiB := copyConfig.Key("max_size").MustInt64(0)
@@ -141,7 +147,7 @@ func run(ctx context.Context, args []string) error {
 				MaxFiles: copyConfig.Key("max_files").MustInt64(0),
 				MaxBytes: min(max(0, maxMiB), math.MaxInt64>>20) << 20,
 			}
-			fileHandlers, closeMoves := reader.FileWriteRPCHandlers(ctx, writer, identity, cloudMode, quota, limits)
+			fileHandlers, closeMoves := reader.FileWriteRPCHandlers(ctx, writer, identity, cloudMode, quota, passwords, limits)
 			defer closeMoves()
 			maps.Copy(handlers, fileHandlers)
 			groupManagement, err := seafserver.OpenGroupManagement(ccnetDir, writer)
@@ -157,11 +163,6 @@ func run(ctx context.Context, args []string) error {
 			defer accounts.Close()
 			maps.Copy(handlers, accounts.RPCHandlers())
 		}
-
-		passwords = seafserver.NewRepoPasswords(reader)
-		maps.Copy(handlers, passwords.RPCHandlers())
-		stopPasswords := passwords.StartCleanup(ctx)
-		defer stopPasswords()
 	}
 	tokenMode, tokenTTL, err := webTokenSettings(confData, os.Getenv("ENABLE_GO_FILESERVER"))
 	if err != nil {

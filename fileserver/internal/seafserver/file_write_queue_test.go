@@ -15,7 +15,7 @@ func TestFileWriteQueueRollsBackAndKeepsNewerWork(t *testing.T) {
 		t.Fatal(rpcErr)
 	}
 	repoID := id.(string)
-	handlers, closeMoves := reader.FileWriteRPCHandlers(ctx, db, nil, false, nil, FileMoveLimits{})
+	handlers, closeMoves := reader.FileWriteRPCHandlers(ctx, db, nil, false, nil, NewRepoPasswords(reader), FileMoveLimits{})
 	defer closeMoves()
 	write := handlers["seafile_post_empty_file"]
 	if _, rpcErr := write(ctx, fileWriteRPCArgs(t, repoID, "/", "first.txt", owner)); rpcErr != nil {

@@ -142,6 +142,7 @@ func run(ctx context.Context, args []string) error {
 		maps.Copy(handlers, reader.HistoryRPCHandlers(writer))
 		maps.Copy(handlers, reader.RepoCreationRPCHandlers(writer))
 		maps.Copy(handlers, reader.RepoTrashWriteRPCHandlers(writer, cloudMode))
+		handlers["seafile_set_repo_owner"] = seafserver.SetRepoOwnerRPC(writer, cloudMode)
 		stopTrashExpiry := reader.StartRepoTrashExpiry(ctx, writer, serverConfig)
 		defer stopTrashExpiry()
 		maps.Copy(handlers, reader.DirectoryShareRPCHandlers(writer))

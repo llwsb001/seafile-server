@@ -34,6 +34,8 @@ chmod 0755 "$bin/"*
 
 install -m 0644 scripts/sql/sqlite/*.sql "$share/sqlite"
 install -m 0644 release/sqlite/config/*.conf "$share/config"
+install -m 0755 release/sqlite/snapshot.py "$bin/seafile-sqlite-snapshot"
+install -m 0644 release/sqlite/SNAPSHOT.md "$share/SNAPSHOT.md"
 install -m 0644 LICENSE.txt "$staging"
 printf '%s\n' \
     "revision=$revision" \

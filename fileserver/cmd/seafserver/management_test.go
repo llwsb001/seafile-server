@@ -18,12 +18,17 @@ import (
 
 func TestManagementRPCBootstrap(t *testing.T) {
 	t.Setenv("ENABLE_GO_FILESERVER", "false")
-	for _, enabled := range []bool{false, true} {
-		name := "default"
-		if enabled {
-			name = "management"
-		}
-		t.Run(name, func(t *testing.T) {
+	for _, test := range []struct {
+		name            string
+		enabled         bool
+		invalidTemplate bool
+	}{
+		{name: "default"},
+		{name: "management", enabled: true},
+		{name: "management with invalid template", enabled: true, invalidTemplate: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			enabled := test.enabled
 			// Keep the path within the Unix socket address limit on macOS.
 			root, err := os.MkdirTemp("", "seaf-rpc-")
 			if err != nil {
@@ -34,15 +39,11 @@ func TestManagementRPCBootstrap(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(root, "seafile.conf"), []byte(conf), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			db, err := sql.Open("sqlite", filepath.Join(root, "seafile.db"))
-			if err != nil {
-				t.Fatal(err)
-			}
-			_, err = db.Exec(`CREATE TABLE SeafileConf (cfg_group TEXT, cfg_key TEXT, value TEXT, property INTEGER);
-				CREATE TABLE RepoValidSince (repo_id TEXT PRIMARY KEY, timestamp BIGINT)`)
-			db.Close()
-			if err != nil {
-				t.Fatal(err)
+			initSeafileSQLite(t, root)
+			if test.invalidTemplate {
+				if err := os.WriteFile(filepath.Join(root, "library-template"), nil, 0o600); err != nil {
+					t.Fatal(err)
+				}
 			}
 			ctx, cancel := context.WithCancel(context.Background())
 			ready := make(chan error, 1)
@@ -114,6 +115,14 @@ func TestManagementRPCBootstrap(t *testing.T) {
 			if err != nil || result != float64(0) {
 				t.Fatalf("enabled setter returned %v, %v", result, err)
 			}
+			templateID, err := client.Call("get_system_default_repo_id")
+			if test.invalidTemplate {
+				if templateID != nil || err != nil {
+					t.Fatalf("invalid template published a default library: %v, %v", templateID, err)
+				}
+			} else if id, ok := templateID.(string); !ok || len(id) != 36 || err != nil {
+				t.Fatalf("default template was not ready: %v, %v", templateID, err)
+			}
 			result, err = client.Call("get_server_config_string", "example", "value")
 			if err != nil || result != "SQLite" {
 				t.Fatalf("enabled getter returned %v, %v", result, err)
@@ -123,6 +132,22 @@ func TestManagementRPCBootstrap(t *testing.T) {
 				t.Fatalf("management flag changed Web token registration: %v", err)
 			}
 		})
+	}
+}
+
+func initSeafileSQLite(t *testing.T, root string) {
+	t.Helper()
+	schema, err := os.ReadFile("../../../scripts/sql/sqlite/seafile.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", filepath.Join(root, "seafile.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(string(schema)); err != nil {
+		t.Fatal(err)
 	}
 }
 

@@ -125,6 +125,7 @@ func applyInitialEncryption(commit *commitmgr.Commit, args []json.RawMessage) *s
 		commit.PwdHashAlgo = *algorithm
 		if params != nil {
 			commit.PwdHashParams = *params
+			commit.HasPwdHashParams = true
 		}
 	}
 	return nil

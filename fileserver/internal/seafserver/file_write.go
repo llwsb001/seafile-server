@@ -197,6 +197,7 @@ func newFileWriteCommit(tree *fileTree, description string, parent *commitmgr.Co
 	commit.Encrypted, commit.EncVersion = parent.Encrypted, parent.EncVersion
 	commit.Magic, commit.RandomKey, commit.Salt = parent.Magic, parent.RandomKey, parent.Salt
 	commit.PwdHash, commit.PwdHashAlgo, commit.PwdHashParams = parent.PwdHash, parent.PwdHashAlgo, parent.PwdHashParams
+	commit.HasPwdHashParams = parent.HasPwdHashParams
 	commit.NoLocalHistory, commit.Repaired = parent.NoLocalHistory, parent.Repaired
 	return commit
 }

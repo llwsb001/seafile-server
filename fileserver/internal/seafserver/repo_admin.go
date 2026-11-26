@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log"
+	"slices"
 	"strings"
 
 	"github.com/haiwen/seafile-server/fileserver/searpc"
@@ -12,8 +13,10 @@ import (
 // AdminRepoReadRPCHandlers exposes the SQLite repository inventory on the management socket.
 func (r *Reader) AdminRepoReadRPCHandlers() map[string]searpc.Handler {
 	return map[string]searpc.Handler{
-		"seafile_get_repo_list": r.listAdminRepos,
-		"seafile_count_repos":   r.countAdminRepos,
+		"seafile_get_repo_list":          r.listAdminRepos,
+		"seafile_count_repos":            r.countAdminRepos,
+		"seafile_search_repos_by_name":   r.searchAdminReposByName,
+		"seafile_get_repos_by_id_prefix": r.searchAdminReposByIDPrefix,
 	}
 }
 
@@ -32,9 +35,11 @@ LEFT JOIN RepoFileCount f ON i.repo_id = f.repo_id
 LEFT JOIN Repo r ON i.repo_id = r.repo_id
 LEFT JOIN VirtualRepo v ON i.repo_id = v.repo_id`
 
+const adminRepoQuery = adminRepoColumns + ", COALESCE(f.file_count, 0)" + adminRepoTables + adminRepoCountJoin
+
 func (r *Reader) listAdminRepos(ctx context.Context, args []json.RawMessage) (any, *searpc.RPCError) {
 	var query strings.Builder
-	query.WriteString(adminRepoColumns + ", COALESCE(f.file_count, 0)" + adminRepoTables + adminRepoCountJoin + " WHERE r.repo_id IS NOT NULL")
+	query.WriteString(adminRepoQuery + " WHERE r.repo_id IS NOT NULL")
 	if intArgument(args, 3) == 0 {
 		query.WriteString(" AND v.repo_id IS NULL")
 	}
@@ -63,6 +68,43 @@ func (r *Reader) countAdminRepos(ctx context.Context, _ []json.RawMessage) (any,
 		return int64(-1), rpcError(errGeneral, "Failed to count repos from db")
 	}
 	return count, nil
+}
+
+func (r *Reader) searchAdminReposByName(ctx context.Context, args []json.RawMessage) (any, *searpc.RPCError) {
+	// GLib prints a null name as "(null)" in the C LIKE pattern.
+	term := "(null)"
+	if name := stringArgument(args, 0); name != nil {
+		term = *name
+	}
+	const query = adminRepoQuery + `
+WHERE i.name LIKE ? COLLATE NOCASE AND r.repo_id IS NOT NULL AND v.repo_id IS NULL
+ORDER BY i.update_time DESC, i.repo_id`
+	return r.adminRepoRows(ctx, query, "%"+term+"%"), nil
+}
+
+func (r *Reader) searchAdminReposByIDPrefix(ctx context.Context, args []json.RawMessage) (any, *searpc.RPCError) {
+	prefix := stringArgument(args, 0)
+	if prefix == nil {
+		return nil, rpcError(errBadArgs, "Argument should not be null")
+	}
+	if len(*prefix) > 36 {
+		return nil, nil
+	}
+	// Unlike the name search, the C ID lookup also includes orphaned RepoInfo records.
+	query := adminRepoColumns + ", 0" + adminRepoTables + `
+LEFT JOIN VirtualRepo v ON i.repo_id = v.repo_id
+WHERE i.repo_id LIKE ? AND v.repo_id IS NULL
+ORDER BY i.update_time DESC, i.repo_id`
+	parameters := []any{*prefix + "%"}
+	start, limit := intArgument(args, 1), intArgument(args, 2)
+	if start != -1 || limit != -1 {
+		query += " LIMIT ? OFFSET ?"
+		parameters = append(parameters, limit, start)
+	}
+	result := r.adminRepoRows(ctx, query, parameters...)
+	// The RPC returns the C collector's prepended list after SQLite applies the page.
+	slices.Reverse(result)
+	return result, nil
 }
 
 func (r *Reader) adminRepoRows(ctx context.Context, query string, args ...any) []map[string]any {

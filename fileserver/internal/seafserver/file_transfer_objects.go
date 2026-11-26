@@ -47,6 +47,9 @@ func (c *libraryCopy) copyFile(file *fsmgr.Seafile) (string, error) {
 		return c.transcodeFile(file)
 	}
 	fromStore, toStore := c.from.repo.StoreID, c.to.repo.StoreID
+	if fromStore == toStore {
+		return file.FileID, nil
+	}
 	for _, id := range file.BlkIDs {
 		if err := c.ctx.Err(); err != nil {
 			return "", err

@@ -41,7 +41,8 @@ func newSQLiteFileServerCommit(repo *repomgr.Repo, parent *commitmgr.Commit, roo
 func sameCommitEncryption(a, b *commitmgr.Commit) bool {
 	return a.Encrypted == b.Encrypted && a.EncVersion == b.EncVersion && a.Magic == b.Magic &&
 		a.RandomKey == b.RandomKey && a.Salt == b.Salt && a.PwdHash == b.PwdHash &&
-		a.PwdHashAlgo == b.PwdHashAlgo && a.PwdHashParams == b.PwdHashParams
+		a.PwdHashAlgo == b.PwdHashAlgo && a.PwdHashParams == b.PwdHashParams &&
+		a.HasPwdHashParams == b.HasPwdHashParams
 }
 
 func mergeSQLiteCredentialCommit(repo *repomgr.Repo, head, incoming *commitmgr.Commit, user string) (*commitmgr.Commit, error) {

@@ -19,6 +19,15 @@ import (
 	"github.com/haiwen/seafile-server/fileserver/searpc"
 )
 
+func TestSQLiteSyncPreservesExplicitEmptyHashParameters(t *testing.T) {
+	rotated := commitmgr.Commit{Encrypted: "true", EncVersion: 2, PwdHashAlgo: "pbkdf2_sha256", HasPwdHashParams: true}
+	client := rotated
+	client.HasPwdHashParams = false
+	if sameCommitEncryption(&rotated, &client) {
+		t.Fatal("a client that omits parameters could overwrite the explicitly empty migration target")
+	}
+}
+
 func TestSQLiteBranchPublication(t *testing.T) {
 	t.Setenv("TMPDIR", "/tmp")
 	root := t.TempDir()

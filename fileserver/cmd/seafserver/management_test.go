@@ -38,7 +38,8 @@ func TestManagementRPCBootstrap(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			_, err = db.Exec("CREATE TABLE SeafileConf (cfg_group TEXT, cfg_key TEXT, value TEXT, property INTEGER)")
+			_, err = db.Exec(`CREATE TABLE SeafileConf (cfg_group TEXT, cfg_key TEXT, value TEXT, property INTEGER);
+				CREATE TABLE RepoValidSince (repo_id TEXT PRIMARY KEY, timestamp BIGINT)`)
 			db.Close()
 			if err != nil {
 				t.Fatal(err)
@@ -60,6 +61,13 @@ func TestManagementRPCBootstrap(t *testing.T) {
 			path := filepath.Join(root, "seafile.sock")
 			waitForRPC(t, path, enabled)
 			client := searpc.Init(path, seafserver.RPCService, 0)
+			wantTrashError := "cannot find function seafile_destroy_repo"
+			if enabled {
+				wantTrashError = "Argument should not be null"
+			}
+			if _, err := client.Call("seafile_destroy_repo"); err == nil || !strings.Contains(err.Error(), wantTrashError) {
+				t.Errorf("seafile_destroy_repo returned %v, want %q", err, wantTrashError)
+			}
 			for _, method := range []string{
 				"seafile_check_passwd", "seafile_set_passwd", "seafile_unset_passwd",
 				"seafile_is_passwd_set", "seafile_get_decrypt_key",
@@ -70,6 +78,30 @@ func TestManagementRPCBootstrap(t *testing.T) {
 				}
 				if _, err := client.Call(method); err == nil || !strings.Contains(err.Error(), wantError) {
 					t.Errorf("%s returned %v, want %q", method, err, wantError)
+				}
+			}
+			for _, call := range []struct {
+				method string
+				want   string
+			}{
+				{"set_repo_history_limit", "Invalid repo id"},
+				{"set_repo_valid_since", ""},
+				{"clean_up_repo_history", "Invalid arguments"},
+			} {
+				const timestamp = int64(4294967296)
+				result, err := client.Call(call.method, "invalid", timestamp)
+				want := call.want
+				if !enabled {
+					want = "cannot find function " + call.method
+				}
+				if want == "" {
+					if err != nil || result != float64(0) {
+						t.Errorf("%s returned %v, %v", call.method, result, err)
+					}
+					continue
+				}
+				if err == nil || !strings.Contains(err.Error(), want) {
+					t.Errorf("%s returned %v, want %q", call.method, err, want)
 				}
 			}
 			result, err := client.Call("set_server_config_string", "example", "value", "SQLite")

@@ -6,8 +6,6 @@ import (
 	"database/sql/driver"
 )
 
-const sqliteBusyTimeout = "_pragma=busy_timeout(250)"
-
 // OpenSQLiteReadWrite prepares a write pool for an existing SQLite database.
 // SQLite opens the file on the first operation.
 func OpenSQLiteReadWrite(dbPath string) (*sql.DB, error) {
@@ -15,7 +13,7 @@ func OpenSQLiteReadWrite(dbPath string) (*sql.DB, error) {
 	if err != nil {
 		return nil, err
 	}
-	uri.RawQuery = "mode=rw&" + sqliteBusyTimeout
+	uri.RawQuery = "mode=rw&_pragma=busy_timeout(250)"
 	db, err := sql.Open("sqlite", uri.String())
 	if err != nil {
 		return nil, err

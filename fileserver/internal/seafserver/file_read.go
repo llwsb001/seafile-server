@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/haiwen/seafile-server/fileserver/commitmgr"
 	"github.com/haiwen/seafile-server/fileserver/searpc"
@@ -82,22 +81,17 @@ func (r *Reader) commitList(config *ServerConfig) searpc.Handler {
 			return nil, rpcError(507, "Failed to list commits")
 		}
 
-		days := r.historyLimit(ctx, *repoID, config)
-		truncate := int64(-1)
-		if days == 0 {
-			truncate = 0
-		} else {
-			_ = r.db.QueryRowContext(ctx, "SELECT timestamp FROM RepoValidSince WHERE repo_id = ?", *repoID).Scan(&truncate)
-			if days > 0 {
-				truncate = max(truncate, time.Now().Unix()-int64(days)*24*60*60)
-			}
-		}
+		truncate := r.historyTruncateTime(ctx, *repoID, config)
 		offset, limit := max(0, intArgument(args, 1)), intArgument(args, 2)
-		return r.collectCommits(head, offset, limit, truncate), nil
+		// C compares the visit count against an end offset held in a signed int.
+		if limit > 0 && int32(offset)+int32(limit) < 0 {
+			return nil, nil
+		}
+		return r.collectCommits(*repoID, head, offset, limit, truncate), nil
 	}
 }
 
-func (r *Reader) collectCommits(head *commitmgr.Commit, offset, limit int, truncate int64) []map[string]any {
+func (r *Reader) collectCommits(repoID string, head *commitmgr.Commit, offset, limit int, truncate int64) []map[string]any {
 	var result []map[string]any
 	visited := map[string]bool{head.CommitID: true}
 	pending := []*commitmgr.Commit{head}
@@ -117,11 +111,11 @@ func (r *Reader) collectCommits(head *commitmgr.Commit, offset, limit int, trunc
 			if !parent.Valid || visited[parent.String] {
 				continue
 			}
-			visited[parent.String] = true
-			next, err := r.Commit(commit.RepoID, parent.String)
+			next, err := r.Commit(repoID, parent.String)
 			if err != nil {
 				continue
 			}
+			visited[parent.String] = true
 			// Like the C queue, visit newer commits first and prepend ties.
 			position := sort.Search(len(pending), func(i int) bool { return pending[i].Ctime <= next.Ctime })
 			pending = append(pending, nil)
